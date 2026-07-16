@@ -23,12 +23,14 @@ const GUILD_CONFIG_DEFAULTS = {
     logging: {
         enabled: false,
         channels: { audit: null, applications: null, reports: null },
+        eventChannels: {},
         ignore: { users: [], channels: [] },
         enabledEvents: {},
     },
     lockdown: {
         antiNukeEnabled: false,
         quarantineRoleId: null,
+        alertChannelId: null,
         trustedUserIds: [],
         trustedRoleIds: [],
         restrictions: {

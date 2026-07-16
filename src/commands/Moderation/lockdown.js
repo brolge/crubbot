@@ -1,4 +1,5 @@
 import {
+  ChannelType,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
@@ -37,6 +38,7 @@ function statusDescription(config) {
     `**Lockdown:** ${config.active ? 'ACTIVE' : 'Inactive'}`,
     `**Anti-nuke:** ${config.antiNukeEnabled ? 'Enabled' : 'Disabled'}`,
     `**Quarantine role:** ${config.quarantineRoleId ? `<@&${config.quarantineRoleId}>` : 'Not configured'}`,
+    `**Anti-nuke alert channel:** ${config.alertChannelId ? `<#${config.alertChannelId}>` : 'Not configured'}`,
     `**Trusted users:** ${config.trustedUserIds.length}`,
     `**Trusted roles:** ${config.trustedRoleIds.length}`,
     '',
@@ -60,6 +62,14 @@ export default {
         .setName('role')
         .setDescription('Assignable quarantine role')
         .setRequired(true)))
+    .addSubcommand(subcommand => subcommand
+      .setName('alert-channel')
+      .setDescription('Set the channel for anti-nuke quarantine alerts')
+      .addChannelOption(option => option
+        .setName('channel')
+        .setDescription('Text channel for anti-nuke alerts. Omit to clear.')
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+        .setRequired(false)))
     .addSubcommand(subcommand => subcommand
       .setName('trusted-user')
       .setDescription('Add or remove an anti-nuke trusted user')
@@ -121,6 +131,32 @@ export default {
         }));
         return InteractionHelper.universalReply(interaction, {
           embeds: [successEmbed('Quarantine Role Saved', `${role} will be assigned when anti-nuke triggers.`)],
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      if (subcommand === 'alert-channel') {
+        const channel = interaction.options.getChannel('channel');
+        if (channel) {
+          const botPerms = channel.permissionsFor(interaction.guild.members.me);
+          if (!botPerms?.has(['ViewChannel', 'SendMessages', 'EmbedLinks'])) {
+            return InteractionHelper.universalReply(interaction, {
+              embeds: [errorEmbed('Missing Permissions', `I need View Channel, Send Messages, and Embed Links in ${channel}.`)],
+              flags: MessageFlags.Ephemeral,
+            });
+          }
+        }
+        await updateLockdownConfig(client, interaction.guildId, current => ({
+          ...current,
+          alertChannelId: channel?.id || null,
+        }));
+        return InteractionHelper.universalReply(interaction, {
+          embeds: [successEmbed(
+            channel ? 'Anti-Nuke Alert Channel Saved' : 'Anti-Nuke Alert Channel Cleared',
+            channel
+              ? `Quarantine alerts will post in ${channel}.`
+              : 'Anti-nuke alerts will no longer post to a dedicated channel (bot logs still mirror if logging is enabled).',
+          )],
           flags: MessageFlags.Ephemeral,
         });
       }

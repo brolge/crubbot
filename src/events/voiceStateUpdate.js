@@ -9,6 +9,7 @@ import {
 import { sanitizeInput } from '../utils/validation.js';
 import { logger } from '../utils/logger.js';
 import { handleMusicVoiceState } from '../services/music/musicVoiceState.js';
+import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 
 const channelCreationCooldown = new Map();
 const VOICE_CREATE_COOLDOWN_MS = 2000;
@@ -22,12 +23,64 @@ const MAX_TRACKED_COOLDOWNS = 10000;
 export default {
     name: 'voiceStateUpdate',
     async execute(oldState, newState, client) {
-        if (newState.member.user.bot) return;
+        if (newState.member?.user?.bot) return;
 
         const guildId = newState.guild.id;
         const userId = newState.member.id;
         const cooldownKey = `${guildId}-${userId}`;
         cleanupCooldownEntries();
+
+        try {
+            if (!oldState.channelId && newState.channelId) {
+                await logEvent({
+                    client,
+                    guildId,
+                    eventType: EVENT_TYPES.VOICE_JOIN,
+                    data: {
+                        title: 'Voice join',
+                        lines: [
+                            `**User:** ${newState.member} (${userId})`,
+                            `**Channel:** ${newState.channel}`,
+                        ],
+                        userId,
+                        channelId: newState.channelId,
+                    },
+                });
+            } else if (oldState.channelId && !newState.channelId) {
+                await logEvent({
+                    client,
+                    guildId,
+                    eventType: EVENT_TYPES.VOICE_LEAVE,
+                    data: {
+                        title: 'Voice leave',
+                        lines: [
+                            `**User:** ${oldState.member || newState.member} (${userId})`,
+                            `**Channel:** ${oldState.channel || oldState.channelId}`,
+                        ],
+                        userId,
+                        channelId: oldState.channelId,
+                    },
+                });
+            } else if (oldState.channelId && newState.channelId && oldState.channelId !== newState.channelId) {
+                await logEvent({
+                    client,
+                    guildId,
+                    eventType: EVENT_TYPES.VOICE_MOVE,
+                    data: {
+                        title: 'Voice move',
+                        lines: [
+                            `**User:** ${newState.member} (${userId})`,
+                            `**From:** ${oldState.channel || oldState.channelId}`,
+                            `**To:** ${newState.channel || newState.channelId}`,
+                        ],
+                        userId,
+                        channelId: newState.channelId,
+                    },
+                });
+            }
+        } catch (error) {
+            logger.error(`Voice logging failed for guild ${guildId}:`, error);
+        }
 
         try {
             const config = await getJoinToCreateConfig(client, guildId);

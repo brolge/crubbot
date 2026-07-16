@@ -30,9 +30,10 @@ class Crub extends Client {
         GatewayIntentBits.MessageContent,               
         GatewayIntentBits.DirectMessages,
 
-        GatewayIntentBits.GuildVoiceStates,             
+        GatewayIntentBits.GuildVoiceStates,
 
-        GatewayIntentBits.GuildBans,                    
+        GatewayIntentBits.GuildBans,
+        GatewayIntentBits.GuildInvites,
       ],
     });
 
@@ -92,9 +93,9 @@ class Crub extends Client {
       startupLog('Registering slash commands...');
       await this.registerCommands();
       if (this.config.bot.multiGuild) {
-        startupLog('Multi-guild mode enabled — slash commands registered globally');
+        startupLog('Multi-guild mode enabled ? slash commands registered globally');
       } else if (this.config.bot.guildId) {
-        startupLog(`Single-guild mode — slash commands registered for guild ${this.config.bot.guildId}`);
+        startupLog(`Single-guild mode ? slash commands registered for guild ${this.config.bot.guildId}`);
       }
       startupLog('Slash commands registration complete');
       

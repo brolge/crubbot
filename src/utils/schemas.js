@@ -13,15 +13,27 @@ export const LogIgnoreSchema = z
 export const LoggingChannelsSchema = z
   .object({
     audit: z.string().nullable().optional(),
+    message: z.string().nullable().optional(),
+    member: z.string().nullable().optional(),
+    moderation: z.string().nullable().optional(),
+    channel: z.string().nullable().optional(),
+    role: z.string().nullable().optional(),
+    voice: z.string().nullable().optional(),
+    invite: z.string().nullable().optional(),
+    server: z.string().nullable().optional(),
+    reaction: z.string().nullable().optional(),
+    bot: z.string().nullable().optional(),
     applications: z.string().nullable().optional(),
     reports: z.string().nullable().optional(),
   })
-  .default({ audit: null, applications: null, reports: null });
+  .passthrough()
+  .default({});
 
 export const LoggingConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
     channels: LoggingChannelsSchema.optional(),
+    eventChannels: z.record(z.string().nullable()).default({}),
     ignore: LogIgnoreSchema.optional(),
     enabledEvents: z.record(z.boolean()).default({}),
     // legacy flat fields — accepted on parse, stripped on normalize
@@ -80,6 +92,7 @@ const LockdownConfigSchema = z
   .object({
     antiNukeEnabled: z.boolean().default(false),
     quarantineRoleId: z.string().nullable().default(null),
+    alertChannelId: z.string().nullable().default(null),
     trustedUserIds: z.array(z.string()).max(100).default([]),
     trustedRoleIds: z.array(z.string()).max(100).default([]),
     restrictions: z.object({

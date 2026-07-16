@@ -26,18 +26,17 @@ import {
   buildLoggingDashboardView,
   buildLoggingCategoriesView,
   buildLoggingFilterView,
+  buildLoggingRoutesView,
   isCategoriesView,
   isFilterView,
+  isRoutesView,
   refreshDashboardMessage,
 } from '../commands/Logging/modules/logging_dashboard.js';
+import { LOG_DESTINATION_LABELS } from '../utils/logDestinations.js';
 
 const LOGGING_CATEGORIES = [...new Set(Object.values(EVENT_TYPES).map((eventType) => eventType.split('.')[0]))];
 
-const DESTINATION_LABELS = {
-  audit: 'Audit Log',
-  applications: 'Applications',
-  reports: 'Reports',
-};
+const DESTINATION_LABELS = LOG_DESTINATION_LABELS;
 
 export default {
   customIds: [
@@ -94,6 +93,11 @@ async function handleRefresh(interaction) {
 
   if (isFilterView(interaction)) {
     const { embed, components } = await buildLoggingFilterView(interaction, interaction.client);
+    return interaction.update({ embeds: [embed], components, content: null });
+  }
+
+  if (isRoutesView(interaction)) {
+    const { embed, components } = await buildLoggingRoutesView(interaction, interaction.client);
     return interaction.update({ embeds: [embed], components, content: null });
   }
 
@@ -391,12 +395,19 @@ export async function handleLoggingMenuSelect(interaction) {
   if (value.startsWith('clear:')) {
     const destination = value.replace('clear:', '');
     await setLogChannel(interaction.client, interaction.guildId, destination, null);
-    const { embed, components } = await buildLoggingDashboardView(interaction, interaction.client);
+    const view = isRoutesView(interaction)
+      ? await buildLoggingRoutesView(interaction, interaction.client)
+      : await buildLoggingDashboardView(interaction, interaction.client);
     return interaction.update({
-      embeds: [embed],
-      components,
+      embeds: [view.embed],
+      components: view.components,
       content: null,
     });
+  }
+
+  if (value === 'view:routes') {
+    const { embed, components } = await buildLoggingRoutesView(interaction, interaction.client);
+    return interaction.update({ embeds: [embed], components, content: null });
   }
 
   if (value === 'view:categories') {

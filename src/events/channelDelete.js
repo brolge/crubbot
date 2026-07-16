@@ -7,6 +7,7 @@ import {
 } from '../utils/database.js';
 import { getServerCounters, saveServerCounters } from '../services/serverstatsService.js';
 import { handleChannelDeletion } from '../services/lockdownService.js';
+import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from '../utils/logger.js';
 
 export default {
@@ -16,6 +17,27 @@ export default {
             await handleChannelDeletion(client, channel);
         } catch (error) {
             logger.error(`Anti-nuke channel deletion handling failed for guild ${channel.guild?.id || 'unknown'}:`, error);
+        }
+
+        if (channel.guild) {
+            try {
+                await logEvent({
+                    client,
+                    guildId: channel.guild.id,
+                    eventType: EVENT_TYPES.CHANNEL_DELETE,
+                    data: {
+                        title: 'Channel deleted',
+                        lines: [
+                            `**Name:** ${channel.name}`,
+                            `**ID:** ${channel.id}`,
+                            `**Type:** ${channel.type}`,
+                        ],
+                        channelId: channel.id,
+                    },
+                });
+            } catch (error) {
+                logger.error(`Channel delete logging failed for guild ${channel.guild.id}:`, error);
+            }
         }
         
         if (channel.type === 0 && channel.guild) {

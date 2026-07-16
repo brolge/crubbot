@@ -8,6 +8,11 @@ import {
   StringSelectMenuOptionBuilder,
 } from 'discord.js';
 import { EVENT_TYPES } from '../services/loggingService.js';
+import {
+  LOG_DESTINATIONS,
+  LOG_DESTINATION_LABELS,
+  LOG_DESTINATION_DESCRIPTIONS,
+} from './logDestinations.js';
 
 const EVENT_TYPES_BY_CATEGORY = Object.values(EVENT_TYPES).reduce((accumulator, eventType) => {
   const [category] = eventType.split('.');
@@ -18,15 +23,23 @@ const EVENT_TYPES_BY_CATEGORY = Object.values(EVENT_TYPES).reduce((accumulator, 
   return accumulator;
 }, {});
 
+export { EVENT_TYPES_BY_CATEGORY };
+
 export const DASHBOARD_CATEGORIES = [
   'moderation',
   'message',
-  'role',
   'member',
-  'leveling',
+  'role',
+  'channel',
+  'voice',
+  'invite',
+  'server',
+  'reaction',
   'reactionrole',
+  'leveling',
   'giveaway',
   'counter',
+  'security',
   'application',
   'report',
 ];
@@ -34,12 +47,18 @@ export const DASHBOARD_CATEGORIES = [
 const DASHBOARD_CATEGORY_EMOJIS = {
   moderation: '🔨',
   message: '✉️',
-  role: '🏷️',
   member: '👥',
-  leveling: '📈',
+  role: '🏷️',
+  channel: '📁',
+  voice: '🔊',
+  invite: '🔗',
+  server: '🖥️',
+  reaction: '😮',
   reactionrole: '🎭',
+  leveling: '📈',
   giveaway: '🎁',
   counter: '📊',
+  security: '☢️',
   application: '📝',
   report: '🚨',
 };
@@ -47,12 +66,18 @@ const DASHBOARD_CATEGORY_EMOJIS = {
 export const DASHBOARD_CATEGORY_LABELS = {
   moderation: 'Moderation',
   message: 'Messages',
-  role: 'Roles',
   member: 'Members',
-  leveling: 'Leveling',
+  role: 'Roles',
+  channel: 'Channels',
+  voice: 'Voice',
+  invite: 'Invites',
+  server: 'Server',
+  reaction: 'Reactions',
   reactionrole: 'Reaction Roles',
+  leveling: 'Leveling',
   giveaway: 'Giveaways',
   counter: 'Counters',
+  security: 'Security / Anti-Nuke',
   application: 'Applications',
   report: 'Reports',
 };
@@ -95,32 +120,10 @@ export function createLoggingMainMenuSelect() {
       .setPlaceholder('Choose a setting to configure…')
       .addOptions(
         new StringSelectMenuOptionBuilder()
-          .setLabel('Set Audit Log Channel')
-          .setDescription('Moderation, messages, members, roles, etc.')
-          .setValue('set:audit')
-          .setEmoji('🧾'),
-        new StringSelectMenuOptionBuilder()
-          .setLabel('Set Applications Channel')
-          .setDescription('New applications and review updates')
-          .setValue('set:applications')
-          .setEmoji('📝'),
-        new StringSelectMenuOptionBuilder()
-          .setLabel('Set Reports Channel')
-          .setDescription('User reports filed via /report')
-          .setValue('set:reports')
-          .setEmoji('🚨'),
-        new StringSelectMenuOptionBuilder()
-          .setLabel('Clear Audit Channel')
-          .setValue('clear:audit')
-          .setEmoji('🗑️'),
-        new StringSelectMenuOptionBuilder()
-          .setLabel('Clear Applications Channel')
-          .setValue('clear:applications')
-          .setEmoji('🗑️'),
-        new StringSelectMenuOptionBuilder()
-          .setLabel('Clear Reports Channel')
-          .setValue('clear:reports')
-          .setEmoji('🗑️'),
+          .setLabel('Route Log Channels')
+          .setDescription('Map message/member/moderation/etc. to channels')
+          .setValue('view:routes')
+          .setEmoji('📡'),
         new StringSelectMenuOptionBuilder()
           .setLabel('Event Categories')
           .setDescription('Toggle which log types are sent')
@@ -131,6 +134,38 @@ export function createLoggingMainMenuSelect() {
           .setDescription('Skip logs from specific users or channels')
           .setValue('view:filters')
           .setEmoji('🔇'),
+      ),
+  );
+}
+
+export function createLoggingRoutesMenuSelect() {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('log_dash_routes')
+      .setPlaceholder('Choose a log destination to set or clear…')
+      .addOptions(
+        ...LOG_DESTINATIONS.slice(0, 25).map((destination) =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(LOG_DESTINATION_LABELS[destination] || destination)
+            .setDescription((LOG_DESTINATION_DESCRIPTIONS[destination] || destination).slice(0, 100))
+            .setValue(`set:${destination}`),
+        ),
+      ),
+  );
+}
+
+export function createLoggingRoutesClearSelect() {
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('log_dash_routes_clear')
+      .setPlaceholder('Clear a configured destination…')
+      .addOptions(
+        ...LOG_DESTINATIONS.slice(0, 25).map((destination) =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(`Clear ${LOG_DESTINATION_LABELS[destination] || destination}`)
+            .setValue(`clear:${destination}`)
+            .setEmoji('🗑️'),
+        ),
       ),
   );
 }
@@ -152,6 +187,20 @@ export function createLoggingDashboardComponents(_enabledEvents, loggingEnabled 
   return [
     createLoggingMainMenuSelect(),
     createLoggingMainActionRow(loggingEnabled),
+  ];
+}
+
+export function createLoggingRoutesViewComponents() {
+  return [
+    createLoggingRoutesMenuSelect(),
+    createLoggingRoutesClearSelect(),
+    new ActionRowBuilder().addComponents(
+      createBackButton(),
+      new ButtonBuilder()
+        .setCustomId('log_dash_refresh')
+        .setLabel('Refresh')
+        .setStyle(ButtonStyle.Primary),
+    ),
   ];
 }
 
@@ -189,8 +238,10 @@ export function createLoggingFilterComponents() {
         .setCustomId('log_dash_remove_filter')
         .setLabel('Remove Filter')
         .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId('log_dash_refresh')
+        .setLabel('Refresh')
+        .setStyle(ButtonStyle.Primary),
     ),
   ];
 }
-
-export { EVENT_TYPES_BY_CATEGORY };

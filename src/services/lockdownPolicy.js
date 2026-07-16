@@ -25,6 +25,7 @@ export function normalizeLockdownConfig(raw = {}) {
   return {
     antiNukeEnabled: value.antiNukeEnabled === true,
     quarantineRoleId: typeof value.quarantineRoleId === 'string' ? value.quarantineRoleId : null,
+    alertChannelId: typeof value.alertChannelId === 'string' ? value.alertChannelId : null,
     trustedUserIds: [...new Set(Array.isArray(value.trustedUserIds) ? value.trustedUserIds : [])].slice(0, 100),
     trustedRoleIds: [...new Set(Array.isArray(value.trustedRoleIds) ? value.trustedRoleIds : [])].slice(0, 100),
     restrictions: {

@@ -6,10 +6,15 @@ import {
   createLoggingDashboardComponents,
   createLoggingCategoryViewComponents,
   createLoggingFilterComponents,
+  createLoggingRoutesViewComponents,
   DASHBOARD_CATEGORIES,
   DASHBOARD_CATEGORY_LABELS,
   EVENT_TYPES_BY_CATEGORY,
 } from '../../../utils/loggingUi.js';
+import {
+  LOG_DESTINATIONS,
+  LOG_DESTINATION_LABELS,
+} from '../../../utils/logDestinations.js';
 import { InteractionHelper } from '../../../utils/interactionHelper.js';
 import { logger } from '../../../utils/logger.js';
 
@@ -42,9 +47,12 @@ export async function buildLoggingDashboardView(interaction, client) {
   const auditEnabled = Boolean(loggingStatus.enabled);
   const channels = loggingStatus.channels || {};
 
-  const auditChannel = await formatChannelMention(interaction.guild, channels.audit);
-  const applicationsChannel = await formatChannelMention(interaction.guild, channels.applications);
-  const reportsChannel = await formatChannelMention(interaction.guild, channels.reports);
+  const routeLines = [];
+  for (const destination of LOG_DESTINATIONS) {
+    const mention = await formatChannelMention(interaction.guild, channels[destination]);
+    routeLines.push(`**${LOG_DESTINATION_LABELS[destination]}:** ${mention}`);
+  }
+
   const lifecycleChannel = await formatChannelMention(interaction.guild, guildConfig.ticketLogsChannelId);
   const transcriptChannel = await formatChannelMention(interaction.guild, guildConfig.ticketTranscriptChannelId);
 
@@ -53,7 +61,7 @@ export async function buildLoggingDashboardView(interaction, client) {
 
   const embed = new EmbedBuilder()
     .setTitle('📝 Logging Dashboard')
-    .setDescription(`Manage server logging for **${interaction.guild.name}**. Use the menu below to configure channels, categories, and filters.`)
+    .setDescription(`Manage server logging for **${interaction.guild.name}**. Route each log type to its own channel, matching setups like message-logs / member-logs / moderation-logs.`)
     .setColor(auditEnabled ? getColor('success') : getColor('warning'))
     .addFields(
       {
@@ -72,12 +80,13 @@ export async function buildLoggingDashboardView(interaction, client) {
         inline: true,
       },
       {
-        name: 'Log Channels',
-        value: [
-          `**Audit:** ${auditChannel}`,
-          `**Applications:** ${applicationsChannel}`,
-          `**Reports:** ${reportsChannel}`,
-        ].join('\n'),
+        name: 'Log Channel Routes',
+        value: routeLines.slice(0, 7).join('\n') || '`None configured`',
+        inline: false,
+      },
+      {
+        name: 'More Routes',
+        value: routeLines.slice(7).join('\n') || '`—`',
         inline: false,
       },
       {
@@ -89,7 +98,7 @@ export async function buildLoggingDashboardView(interaction, client) {
         inline: false,
       },
     )
-    .setFooter({ text: 'Ticket channels: configure via /ticket dashboard' })
+    .setFooter({ text: 'Use Route Log Channels to map each destination · unset routes fall back to Audit' })
     .setTimestamp();
 
   const components = createLoggingDashboardComponents(loggingStatus.enabledEvents, auditEnabled);
@@ -157,12 +166,42 @@ export function isFilterView(interaction) {
   return interaction.message?.embeds?.[0]?.title === '🔇 Log Ignore Filters';
 }
 
+export function isRoutesView(interaction) {
+  return interaction.message?.embeds?.[0]?.title === '📡 Log Channel Routes';
+}
+
+export async function buildLoggingRoutesView(interaction, client) {
+  const loggingStatus = await getLoggingStatus(client, interaction.guildId);
+  const channels = loggingStatus.channels || {};
+
+  const lines = [];
+  for (const destination of LOG_DESTINATIONS) {
+    const mention = await formatChannelMention(interaction.guild, channels[destination]);
+    lines.push(`**${LOG_DESTINATION_LABELS[destination]}:** ${mention}`);
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle('📡 Log Channel Routes')
+    .setDescription('Pick a destination below to set its channel. Unset destinations fall back to **Audit**.')
+    .setColor(getColor('info'))
+    .addFields(
+      { name: 'Current Routes', value: lines.slice(0, 7).join('\n'), inline: false },
+      { name: 'More', value: lines.slice(7).join('\n') || '`—`', inline: false },
+    )
+    .setFooter({ text: 'Example: message → #message-logs · moderation → #moderation-logs' })
+    .setTimestamp();
+
+  return { embed, components: createLoggingRoutesViewComponents() };
+}
+
 export async function refreshDashboardMessage(interaction, client) {
   let view;
   if (isCategoriesView(interaction)) {
     view = await buildLoggingCategoriesView(interaction, client);
   } else if (isFilterView(interaction)) {
     view = await buildLoggingFilterView(interaction, client);
+  } else if (isRoutesView(interaction)) {
+    view = await buildLoggingRoutesView(interaction, client);
   } else {
     view = await buildLoggingDashboardView(interaction, client);
   }

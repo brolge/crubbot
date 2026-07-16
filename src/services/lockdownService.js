@@ -1,9 +1,11 @@
 import {
   AuditLogEvent,
+  ChannelType,
   OverwriteType,
 } from 'discord.js';
 import { getGuildConfig, setGuildConfig } from './guildConfig.js';
 import { logger } from '../utils/logger.js';
+import { sendAntiNukeAlert } from './antiNukeAlert.js';
 import {
   DEFAULT_RESTRICTIONS,
   buildRestrictionMask,
@@ -261,11 +263,23 @@ export async function handleChannelDeletion(client, channel, now = Date.now()) {
       return { success: false, failures: [error.message] };
     });
 
+  const alert = await sendAntiNukeAlert(client, guild, lockdown, {
+    executor: member.user,
+    reason,
+    quarantine,
+    lockdownResult,
+    deletedChannelId: channel.id,
+  }).catch(error => {
+    logger.error('Anti-nuke alert failed', { guildId: guild.id, error: error.message });
+    return { alertPosted: false, error: error.message };
+  });
+
   logger.warn('Anti-nuke threshold triggered', {
     guildId: guild.id,
     executorId: entry.executor.id,
     quarantine,
     lockdown: lockdownResult,
+    alert,
   });
-  return { triggered: true, executorId: entry.executor.id, quarantine, lockdown: lockdownResult };
+  return { triggered: true, executorId: entry.executor.id, quarantine, lockdown: lockdownResult, alert };
 }

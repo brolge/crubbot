@@ -107,6 +107,7 @@ test('normalizeLockdownConfig supplies safe defaults and deduplicates trust list
   });
 
   assert.equal(config.antiNukeEnabled, true);
+  assert.equal(config.alertChannelId, null);
   assert.deepEqual(config.trustedUserIds, ['one', 'two']);
   assert.equal(config.restrictions.messaging, true);
   assert.equal(config.restrictions.reactions, false);

@@ -10,10 +10,13 @@ import {
   fieldsToLines,
   splitComparisonFields,
 } from '../utils/logEmbeds.js';
+import {
+  LOG_DESTINATIONS,
+  isLogDestination,
+  resolveEventLogChannelId,
+} from '../utils/logDestinations.js';
 
-const LOG_DESTINATIONS = ['audit', 'applications', 'reports'];
-
-const EVENT_TYPES = {
+export const EVENT_TYPES = {
   MODERATION_BAN: 'moderation.ban',
   MODERATION_KICK: 'moderation.kick',
   MODERATION_MUTE: 'moderation.mute',
@@ -37,10 +40,28 @@ const EVENT_TYPES = {
   ROLE_CREATE: 'role.create',
   ROLE_DELETE: 'role.delete',
   ROLE_UPDATE: 'role.update',
+  ROLE_GIVE: 'role.give',
+  ROLE_REMOVE: 'role.remove',
 
   MEMBER_JOIN: 'member.join',
   MEMBER_LEAVE: 'member.leave',
   MEMBER_NAME_CHANGE: 'member.namechange',
+
+  CHANNEL_CREATE: 'channel.create',
+  CHANNEL_UPDATE: 'channel.update',
+  CHANNEL_DELETE: 'channel.delete',
+
+  VOICE_JOIN: 'voice.join',
+  VOICE_LEAVE: 'voice.leave',
+  VOICE_MOVE: 'voice.move',
+
+  INVITE_CREATE: 'invite.create',
+  INVITE_DELETE: 'invite.delete',
+
+  SERVER_UPDATE: 'server.update',
+
+  REACTION_ADD: 'reaction.add',
+  REACTION_REMOVE: 'reaction.remove',
 
   REACTION_ROLE_ADD: 'reactionrole.add',
   REACTION_ROLE_REMOVE: 'reactionrole.remove',
@@ -60,6 +81,8 @@ const EVENT_TYPES = {
   APPLICATION_REVIEW: 'application.review',
 
   REPORT_FILE: 'report.file',
+
+  SECURITY_ANTINUKE: 'security.antinuke',
 };
 
 const EVENT_COLORS = {
@@ -86,6 +109,19 @@ const EVENT_COLORS = {
   'member.join': 0x2ecc71,
   'member.leave': 0xe74c3c,
   'member.namechange': 0x3498db,
+  'channel.create': 0x2ecc71,
+  'channel.update': 0x3498db,
+  'channel.delete': 0xe74c3c,
+  'voice.join': 0x2ecc71,
+  'voice.leave': 0xe74c3c,
+  'voice.move': 0x3498db,
+  'invite.create': 0x2ecc71,
+  'invite.delete': 0xe74c3c,
+  'server.update': 0x5865F2,
+  'reaction.add': 0x2ecc71,
+  'reaction.remove': 0xe74c3c,
+  'role.give': 0x2ecc71,
+  'role.remove': 0xe74c3c,
   'reactionrole.add': 0x2ecc71,
   'reactionrole.remove': 0xe74c3c,
   'reactionrole.create': 0x3498db,
@@ -100,6 +136,7 @@ const EVENT_COLORS = {
   'application.submit': 0x5865F2,
   'application.review': 0x57F287,
   'report.file': 0xED4245,
+  'security.antinuke': 0x8B0000,
 };
 
 const EVENT_ICONS = {
@@ -126,6 +163,19 @@ const EVENT_ICONS = {
   'member.join': '👋',
   'member.leave': '👋',
   'member.namechange': '🏷️',
+  'channel.create': '📁',
+  'channel.update': '📝',
+  'channel.delete': '🗑️',
+  'voice.join': '🔊',
+  'voice.leave': '🔇',
+  'voice.move': '🔀',
+  'invite.create': '🔗',
+  'invite.delete': '⛓️‍💥',
+  'server.update': '🖥️',
+  'reaction.add': '➕',
+  'reaction.remove': '➖',
+  'role.give': '🎖️',
+  'role.remove': '🚫',
   'reactionrole.add': '✅',
   'reactionrole.remove': '❌',
   'reactionrole.create': '🎭',
@@ -140,11 +190,7 @@ const EVENT_ICONS = {
   'application.submit': '📝',
   'application.review': '📋',
   'report.file': '🚨',
-};
-
-const CATEGORY_DESTINATION = {
-  application: 'applications',
-  report: 'reports',
+  'security.antinuke': '☢️',
 };
 
 export function resolveLogChannel(config, destination) {
@@ -186,13 +232,7 @@ export function isEventEnabled(config, eventType) {
 }
 
 function getLogChannelForEvent(config, eventType, overrideChannelId = null) {
-  if (overrideChannelId) {
-    return overrideChannelId;
-  }
-
-  const category = eventType?.split('.')[0];
-  const destination = CATEGORY_DESTINATION[category] || 'audit';
-  return resolveLogChannel(config, destination);
+  return resolveEventLogChannelId(config, eventType, overrideChannelId);
 }
 
 export async function logEvent({
@@ -355,7 +395,8 @@ export async function getLoggingStatus(client, guildId) {
 
   return {
     enabled: logging.enabled || false,
-    channels: logging.channels || { audit: null, applications: null, reports: null },
+    channels: logging.channels || {},
+    eventChannels: logging.eventChannels || {},
     channelId: logging.channels?.audit ?? null,
     ignore: getIgnoreList(config),
     enabledEvents: logging.enabledEvents || {},
@@ -393,7 +434,7 @@ export async function toggleEventLogging(client, guildId, eventTypes, enabled) {
 }
 
 export async function setLogChannel(client, guildId, destination, channelId) {
-  if (!LOG_DESTINATIONS.includes(destination)) {
+  if (!isLogDestination(destination)) {
     throw new Error(`Invalid log destination: ${destination}`);
   }
 
@@ -412,6 +453,31 @@ export async function setLogChannel(client, guildId, destination, channelId) {
     return true;
   } catch (error) {
     logger.error('Error setting log channel:', error);
+    return false;
+  }
+}
+
+export async function setEventLogChannel(client, guildId, eventType, channelId) {
+  if (!eventType || typeof eventType !== 'string') {
+    throw new Error('Invalid event type');
+  }
+
+  try {
+    const config = await getGuildConfig(client, guildId);
+    const eventChannels = { ...(config.logging?.eventChannels || {}) };
+    if (channelId) eventChannels[eventType] = channelId;
+    else delete eventChannels[eventType];
+
+    const logging = {
+      ...config.logging,
+      eventChannels,
+      ...(channelId ? { enabled: true } : {}),
+    };
+
+    await updateGuildConfig(client, guildId, { logging });
+    return true;
+  } catch (error) {
+    logger.error('Error setting event log channel:', error);
     return false;
   }
 }
@@ -467,4 +533,4 @@ export function resolveApplicationLogChannel(config, roleSettings = {}, appSetti
     || null;
 }
 
-export { EVENT_TYPES, EVENT_COLORS, EVENT_ICONS, LOG_DESTINATIONS };
+export { EVENT_COLORS, EVENT_ICONS, LOG_DESTINATIONS };
