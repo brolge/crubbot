@@ -12,7 +12,28 @@ export default {
 
   async execute(client) {
     try {
-      client.user.setPresence(config.bot.presence);
+      const presence = config.bot.presence || {};
+      const activities = Array.isArray(presence.activities) ? presence.activities : [];
+      const rotateMs = Number(presence.activityRotateMs) || 20_000;
+
+      const applyPresence = (activityIndex = 0) => {
+        const activity = activities.length
+          ? activities[activityIndex % activities.length]
+          : null;
+        client.user.setPresence({
+          status: presence.status || 'online',
+          activities: activity ? [activity] : [],
+        });
+      };
+
+      applyPresence(0);
+      if (activities.length > 1) {
+        let index = 0;
+        setInterval(() => {
+          index = (index + 1) % activities.length;
+          applyPresence(index);
+        }, rotateMs).unref?.();
+      }
 
       startupLog(`Ready! Logged in as ${client.user.tag}`);
       startupLog(`Serving ${client.guilds.cache.size} guild(s)`);

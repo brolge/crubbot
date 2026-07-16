@@ -21,12 +21,20 @@ export const botConfig = {
     // 3 = Watching
     // 4 = Custom
     // 5 = Competing
+    // Rotated under the bot name by the ready event.
+    activityRotateMs: 20_000,
     activities: [
       {
-        // Text users will see (example: "Playing /help | Crub").
-        name: "Made with ❤️",
-        // Activity type number (0 = Playing).
-        type: 0,
+        name: "Developed By ChromaTech LTD",
+        type: 3, // Watching
+      },
+      {
+        name: "hey guys Brolge here",
+        type: 3,
+      },
+      {
+        name: "raefe is goated",
+        type: 3,
       },
     ],
   },
