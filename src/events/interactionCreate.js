@@ -1,7 +1,7 @@
 import { Events, MessageFlags } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getGuildConfig } from '../services/guildConfig.js';
-import { handleApplicationModal } from '../commands/Community/apply.js';
+import { handleApplicationModal, handleApplicationWizardButton } from '../commands/Community/apply.js';
 import { handleApplicationReviewModal } from '../commands/Community/app-admin.js';
 import { handleInteractionError, createError, ErrorTypes } from '../utils/errorHandler.js';
 import { InteractionHelper } from '../utils/interactionHelper.js';
@@ -248,6 +248,20 @@ export default {
             }
           }
         } else if (interaction.isButton()) {
+          if (interaction.customId.startsWith('app_wiz_')) {
+            try {
+              const handled = await handleApplicationWizardButton(interaction);
+              if (handled) return;
+            } catch (error) {
+              await handleInteractionError(interaction, error, withTraceContext({
+                type: 'button',
+                customId: interaction.customId,
+                handler: 'application_wizard',
+              }, interactionTraceContext));
+            }
+            return;
+          }
+
           if (interaction.customId.startsWith('shared_todo_')) {
             const parts = interaction.customId.split('_');
             const buttonType = parts.slice(0, 3).join('_');

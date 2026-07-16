@@ -36,6 +36,10 @@ import {
 } from '../../../utils/database.js';
 import { getGuildConfig } from '../../../services/guildConfig.js';
 import { setLogChannel, resolveApplicationLogChannel, resolveLogChannel } from '../../../services/loggingService.js';
+import {
+    handleApplicationQuestionsManager,
+    formatQuestionsForDashboard,
+} from './app_questions_manager.js';
 
 async function buildDashboardEmbed(settings, roles, guild, client) {
     const guildConfig = await getGuildConfig(client, guild.id);
@@ -93,7 +97,7 @@ function buildSelectMenu(guildId) {
                 .setEmoji('🛡️'),
             new StringSelectMenuOptionBuilder()
                 .setLabel('Edit Questions')
-                .setDescription('Customise the questions shown on the application form')
+                .setDescription('Add, edit, delete, or reorder up to 25 questions')
                 .setValue('questions')
                 .setEmoji('📝'),
             new StringSelectMenuOptionBuilder()
@@ -268,18 +272,20 @@ async function showApplicationDashboard(rootInteraction, selectedRole, settings,
 
     const guildConfig = await getGuildConfig(client, guildId);
     const appSettings = await getApplicationRoleSettings(client, guildId, selectedRole.roleId);
-    const questions = appSettings.questions || settings.questions || [];
     const appLogChannelId = resolveApplicationLogChannel(guildConfig, appSettings, settings);
-    const isEnabled = selectedRole.enabled !== false; 
+    const isEnabled = selectedRole.enabled !== false;
 
-    const logChannelDisplay = appLogChannelId 
-        ? `<#${appLogChannelId}>` 
-        : '`Inherits global log channel`';
-    
-    const questionsDisplay = questions.length > 0
-        ? questions.map((q, i) => `${i + 1}. \`${q.length > 60 ? q.substring(0, 60) + '…' : q}\``).join('\n')
-        : '`Inherits global questions`';
-    
+    const logChannelDisplay = appLogChannelId
+        ? `<#${appLogChannelId}>`
+        : `Inherits global log channel`;
+
+    const questionsDisplay = formatQuestionsForDashboard(
+        Array.isArray(appSettings.questions) && appSettings.questions.length > 0
+            ? appSettings.questions
+            : [],
+        { inheritsGlobal: !(Array.isArray(appSettings.questions) && appSettings.questions.length > 0) },
+    );
+
     const managerRolesDisplay = settings.managerRoles && settings.managerRoles.length > 0
         ? settings.managerRoles.map(id => `<@&${id}>`).join(',')
         : '`None configured`';
@@ -662,7 +668,7 @@ function buildApplicationSelectMenu(guildId, roleId) {
                 .setEmoji('🛡️'),
             new StringSelectMenuOptionBuilder()
                 .setLabel('Edit Questions')
-                .setDescription('Customise the questions shown on the application form')
+                .setDescription('Add, edit, delete, or reorder up to 25 questions')
                 .setValue('questions')
                 .setEmoji('📝'),
             new StringSelectMenuOptionBuilder()
@@ -798,108 +804,16 @@ async function handleManagerRole(selectInteraction, rootInteraction, settings, r
 }
 
 async function handleQuestions(selectInteraction, rootInteraction, settings, roles, guildId, client, selectedRoleId) {
-    let currentQuestions = settings.questions ?? [];
-    
-    if (selectedRoleId) {
-        const roleSettings = await getApplicationRoleSettings(client, guildId, selectedRoleId);
-        currentQuestions = roleSettings.questions ?? currentQuestions;
-    }
-
-    const modal = new ModalBuilder()
-        .setCustomId('app_cfg_questions')
-        .setTitle('Edit Application Questions')
-        .addComponents(
-            new ActionRowBuilder().addComponents(
-                new TextInputBuilder()
-                    .setCustomId('q1')
-                    .setLabel('Question 1 (required)')
-                    .setStyle(TextInputStyle.Short)
-                    .setValue(currentQuestions[0] ?? '')
-                    .setMaxLength(100)
-                    .setMinLength(1)
-                    .setRequired(true),
-            ),
-            new ActionRowBuilder().addComponents(
-                new TextInputBuilder()
-                    .setCustomId('q2')
-                    .setLabel('Question 2 (optional)')
-                    .setStyle(TextInputStyle.Short)
-                    .setValue(currentQuestions[1] ?? '')
-                    .setMaxLength(100)
-                    .setRequired(false),
-            ),
-            new ActionRowBuilder().addComponents(
-                new TextInputBuilder()
-                    .setCustomId('q3')
-                    .setLabel('Question 3 (optional)')
-                    .setStyle(TextInputStyle.Short)
-                    .setValue(currentQuestions[2] ?? '')
-                    .setMaxLength(100)
-                    .setRequired(false),
-            ),
-            new ActionRowBuilder().addComponents(
-                new TextInputBuilder()
-                    .setCustomId('q4')
-                    .setLabel('Question 4 (optional)')
-                    .setStyle(TextInputStyle.Short)
-                    .setValue(currentQuestions[3] ?? '')
-                    .setMaxLength(100)
-                    .setRequired(false),
-            ),
-            new ActionRowBuilder().addComponents(
-                new TextInputBuilder()
-                    .setCustomId('q5')
-                    .setLabel('Question 5 (optional)')
-                    .setStyle(TextInputStyle.Short)
-                    .setValue(currentQuestions[4] ?? '')
-                    .setMaxLength(100)
-                    .setRequired(false),
-            ),
-        );
-
-    await selectInteraction.showModal(modal);
-
-    const submitted = await selectInteraction
-        .awaitModalSubmit({
-            filter: i =>
-                i.customId === 'app_cfg_questions' && i.user.id === selectInteraction.user.id,
-            time: 120_000,
-        })
-        .catch(() => null);
-
-    if (!submitted) return;
-
-    const newQuestions = ['q1', 'q2', 'q3', 'q4', 'q5']
-        .map(key => submitted.fields.getTextInputValue(key).trim())
-        .filter(Boolean);
-
-    if (newQuestions.length === 0) {
-        await replyUserError(submitted, { type: ErrorTypes.USER_INPUT, message: 'At least one question is required.' });
-        return;
-    }
-
-    if (selectedRoleId) {
-        
-        const roleSettings = await getApplicationRoleSettings(client, guildId, selectedRoleId);
-        roleSettings.questions = newQuestions;
-        await saveApplicationRoleSettings(client, guildId, selectedRoleId, roleSettings);
-    } else {
-        
-        settings.questions = newQuestions;
-        await saveApplicationSettings(client, guildId, settings);
-    }
-
-    await submitted.reply({
-        embeds: [
-            successEmbed(
-                '✅ Questions Updated',
-                `${newQuestions.length} question${newQuestions.length !== 1 ? 's' : ''} saved.`,
-            ),
-        ],
-        flags: MessageFlags.Ephemeral,
+    await handleApplicationQuestionsManager({
+        selectInteraction,
+        rootInteraction,
+        settings,
+        roles,
+        guildId,
+        client,
+        selectedRoleId,
+        refreshDashboard,
     });
-
-    await refreshDashboard(rootInteraction, settings, roles, guildId, client);
 }
 
 async function handleRoleAdd(selectInteraction, rootInteraction, settings, roles, guildId, client) {

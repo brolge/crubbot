@@ -2,7 +2,7 @@ import { SlashCommandBuilder, PermissionFlagsBits, PermissionsBitField, ChannelT
 import { createEmbed, successEmbed } from '../../utils/embeds.js';
 import { getColor } from '../../config/bot.js';
 import { logger } from '../../utils/logger.js';
-import { handleInteractionError, withErrorHandling, createError, ErrorTypes } from '../../utils/errorHandler.js';
+import { handleInteractionError, withErrorHandling, createError, ErrorTypes, replyUserError } from '../../utils/errorHandler.js';
 import ApplicationService from '../../services/applicationService.js';
 import { 
     getApplicationSettings, 
@@ -18,6 +18,7 @@ import {
 } from '../../utils/database.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import appDashboard from './modules/app_dashboard.js';
+import { chunkAnswersForEmbed } from '../../utils/applicationQuestions.js';
 
 function getApplicationStatusPresentation(statusValue) {
     const normalized = typeof statusValue === 'string' ? statusValue.trim().toLowerCase() : 'unknown';
@@ -260,7 +261,7 @@ async function handleSetup(interaction) {
     await submitted.reply({
         embeds: [successEmbed(
             '✅ Application Created',
-            `**${appName}** application has been created for ${role}.\n\nYou can customize the log channel, manager roles, questions, and retention period in the dashboard.`,
+            `**${appName}** application has been created for ${role}.\n\nStarter questions are set. Use the dashboard **Edit Questions** to add up to 25 (staff apps, etc). You can also customize the log channel, manager roles, and retention.`,
         )],
         flags: ['Ephemeral'],
     });
@@ -286,51 +287,101 @@ async function handleReview(interaction) {
         return await replyUserError(interaction, { type: ErrorTypes.UNKNOWN, message: 'This application has already been processed.' });
     }
 
-    const appEmbed = createEmbed({
-        title: `Review Application`,
-        description: `**User:** <@${application.userId}>\n**Application:** ${application.roleName}\n**Application ID:** \`${appId}\``,
-        color: 'info',
-    });
+    const answerPages = chunkAnswersForEmbed(application.answers || [], 8);
+    let reviewPage = 0;
 
-    if (application.answers && application.answers.length > 0) {
-        application.answers.forEach((item, index) => {
-            appEmbed.addFields({
-                name: `Q${index + 1}: ${item.question}`,
-                value: item.answer || '*No answer provided*',
-                inline: false
+    const buildReviewEmbed = (page) => {
+        const pageNote = answerPages.length > 1
+            ? ('\n**Answers page:** ' + (page + 1) + '/' + answerPages.length)
+            : '';
+        const embed = createEmbed({
+            title: 'Review Application',
+            description:
+                '**User:** <@' + application.userId + '>\n' +
+                '**Application:** ' + application.roleName + '\n' +
+                '**Application ID:** ' + '`' + appId + '`' + pageNote,
+            color: 'info',
+        });
+
+        const pageAnswers = answerPages[page] || [];
+        pageAnswers.forEach((item, i) => {
+            const qNum = page * 8 + i + 1;
+            embed.addFields({
+                name: 'Q' + qNum + ': ' + item.question,
+                value: (item.answer || '*No answer provided*').slice(0, 1024),
+                inline: false,
             });
         });
-    }
 
-    const buttonRow = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId(`app_review_approve_${appId}`)
-            .setLabel('Approve')
-            .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-            .setCustomId(`app_review_deny_${appId}`)
-            .setLabel('Deny')
-            .setStyle(ButtonStyle.Danger),
-    );
+        return embed;
+    };
+
+    const buildReviewComponents = (page) => {
+        const nav = [];
+        if (answerPages.length > 1) {
+            nav.push(
+                new ButtonBuilder()
+                    .setCustomId('app_review_prev_' + appId)
+                    .setLabel('Prev')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page <= 0),
+                new ButtonBuilder()
+                    .setCustomId('app_review_next_' + appId)
+                    .setLabel('Next')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(page >= answerPages.length - 1),
+            );
+        }
+
+        const actions = new ActionRowBuilder().addComponents(
+            ...nav,
+            new ButtonBuilder()
+                .setCustomId('app_review_approve_' + appId)
+                .setLabel('Approve')
+                .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+                .setCustomId('app_review_deny_' + appId)
+                .setLabel('Deny')
+                .setStyle(ButtonStyle.Danger),
+        );
+
+        return [actions];
+    };
 
     await InteractionHelper.safeEditReply(interaction, {
-        embeds: [appEmbed],
-        components: [buttonRow],
-        flags: ["Ephemeral"],
+        embeds: [buildReviewEmbed(reviewPage)],
+        components: buildReviewComponents(reviewPage),
+        flags: ['Ephemeral'],
     });
 
     const collector = interaction.channel.createMessageComponentCollector({
         componentType: ComponentType.Button,
         filter: i =>
             i.user.id === interaction.user.id &&
-            (i.customId.startsWith(`app_review_approve_${appId}`) ||
-             i.customId.startsWith(`app_review_deny_${appId}`)),
-        time: 300_000, 
-        max: 1,
+            (i.customId === ('app_review_approve_' + appId) ||
+             i.customId === ('app_review_deny_' + appId) ||
+             i.customId === ('app_review_prev_' + appId) ||
+             i.customId === ('app_review_next_' + appId)),
+        time: 300_000,
     });
 
     collector.on('collect', async buttonInteraction => {
+        if (buttonInteraction.customId === ('app_review_prev_' + appId) ||
+            buttonInteraction.customId === ('app_review_next_' + appId)) {
+            if (buttonInteraction.customId === ('app_review_prev_' + appId)) {
+                reviewPage = Math.max(0, reviewPage - 1);
+            } else {
+                reviewPage = Math.min(answerPages.length - 1, reviewPage + 1);
+            }
+            await buttonInteraction.update({
+                embeds: [buildReviewEmbed(reviewPage)],
+                components: buildReviewComponents(reviewPage),
+            });
+            return;
+        }
+
         const isApprove = buttonInteraction.customId.includes('approve');
+        collector.stop('decided');
 
         const reasonModal = new ModalBuilder()
             .setCustomId(`app_review_reason_${appId}_${isApprove ? 'approve' : 'deny'}`)
@@ -542,7 +593,7 @@ async function handleList(interaction) {
 
             return InteractionHelper.safeEditReply(interaction, { embeds: [embed], flags: ["Ephemeral"] });
         } else {
-            return await replyUserError(interaction, { type: ErrorTypes.CONFIGURATION, message: '"No applications found and no application roles configured.\\n" +\n                        "Use `/app-admin roles add` to configure application roles first."' });
+            return await replyUserError(interaction, { type: ErrorTypes.CONFIGURATION, message: 'No applications found and no application roles configured. Use /app-admin setup to create one first.' });
         }
     }
 
