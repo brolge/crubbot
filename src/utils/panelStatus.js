@@ -115,6 +115,7 @@ export async function getTicketPanelStatus(client, guild, config) {
         channelId: config.ticketPanelChannelId,
         messageId: config.ticketPanelMessageId,
         buttonCustomId: 'create_ticket',
+        selectCustomId: 'create_ticket_type',
     });
 }
 

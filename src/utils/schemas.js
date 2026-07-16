@@ -29,12 +29,31 @@ export const LoggingConfigSchema = z
   })
   .default({ enabled: false, enabledEvents: {} });
 
+const ChannelPermissionStateSchema = z.enum(['allow', 'deny', 'inherit']);
+const ChannelPermissionTemplateSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1).max(80),
+  permissions: z.record(ChannelPermissionStateSchema),
+});
+
 const TicketLoggingSchema = z
   .object({
     lifecycleChannelId: z.string().nullable().optional(),
     transcriptChannelId: z.string().nullable().optional()
   })
   .optional();
+
+export const TicketTypeSchema = z.object({
+  id: z.string().min(1).max(80),
+  label: z.string().min(1).max(100),
+  description: z.string().max(100).default(''),
+  emoji: z.string().nullable().optional(),
+  categoryId: z.string().nullable().optional(),
+  logChannelId: z.string().nullable().optional(),
+  welcomeText: z.string().max(2000).default(''),
+  enabled: z.boolean().default(true),
+  staffRoleIds: z.array(z.string()).max(25).default([]),
+});
 
 const AutoVerifyConfigSchema = z
   .object({
@@ -57,6 +76,38 @@ const VerificationConfigSchema = z
   })
   .optional();
 
+const LockdownConfigSchema = z
+  .object({
+    antiNukeEnabled: z.boolean().default(false),
+    quarantineRoleId: z.string().nullable().default(null),
+    trustedUserIds: z.array(z.string()).max(100).default([]),
+    trustedRoleIds: z.array(z.string()).max(100).default([]),
+    restrictions: z.object({
+      messaging: z.boolean().default(true),
+      reactions: z.boolean().default(true),
+      publicThreads: z.boolean().default(true),
+      privateThreads: z.boolean().default(true),
+      threadMessages: z.boolean().default(true),
+    }).default({}),
+    active: z.boolean().default(false),
+    snapshot: z.object({
+      createdAt: z.string(),
+      restrictions: z.record(z.boolean()),
+      channels: z.array(z.object({
+        channelId: z.string(),
+        existed: z.boolean(),
+        allow: z.string().regex(/^\d+$/),
+        deny: z.string().regex(/^\d+$/),
+      })).max(500),
+    }).nullable().default(null),
+    quarantinedMembers: z.record(z.object({
+      roleIds: z.array(z.string()).max(250),
+      quarantinedAt: z.string(),
+      reason: z.string(),
+    })).default({}),
+  })
+  .default({});
+
 export const GuildConfigSchema = z
   .object({
     prefix: z.string().optional(),
@@ -73,10 +124,13 @@ export const GuildConfigSchema = z
     logIgnore: LogIgnoreSchema.optional(),
     disabledCommands: z.record(z.boolean()).optional(),
     disabledCategories: z.record(z.boolean()).optional(),
+    permissionTemplates: z.array(ChannelPermissionTemplateSchema).max(25).optional(),
     logging: LoggingConfigSchema.optional(),
     ticketLogging: TicketLoggingSchema.optional(),
+    ticketTypes: z.array(TicketTypeSchema).max(25).optional(),
     enableLogging: z.boolean().optional(),
-    verification: VerificationConfigSchema
+    verification: VerificationConfigSchema,
+    lockdown: LockdownConfigSchema,
   })
   .passthrough();
 

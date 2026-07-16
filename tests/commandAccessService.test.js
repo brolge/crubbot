@@ -18,6 +18,21 @@ const mockClient = {
   ]),
 };
 
+const protectedSubcommandClient = {
+  commands: new Map([
+    ['commands', {
+      data: {
+        name: 'commands',
+        description: 'Manage commands',
+        toJSON: () => ({
+          options: [{ type: 1, name: 'dashboard', description: 'Open dashboard' }],
+        }),
+      },
+      category: 'Core',
+    }],
+  ]),
+};
+
 test('isCommandEnabledInConfig respects category and command disables', () => {
   const config = {
     disabledCategories: { economy: true },
@@ -37,6 +52,18 @@ test('isCommandEnabledInConfig keeps protected commands available', () => {
   assert.equal(isCommandEnabledInConfig(config, 'commands', 'Core'), true);
   assert.equal(isCommandEnabledInConfig(config, 'configwizard', 'Core'), true);
   assert.equal(isCommandEnabledInConfig(config, 'ping', 'Core'), false);
+});
+
+test('protected command subcommands remain available for recovery', () => {
+  const config = {
+    disabledCategories: { core: true },
+    disabledCommands: { 'commands dashboard': true },
+  };
+
+  assert.equal(isCommandEnabledInConfig(config, 'commands dashboard', 'Core'), true);
+  const registry = buildCommandRegistry(protectedSubcommandClient);
+  const dashboard = registry.get('core').commands.find((command) => command.name === 'commands dashboard');
+  assert.equal(dashboard.protected, true);
 });
 
 test('isCommandEnabledInConfig supports legacy array disabledCommands', () => {

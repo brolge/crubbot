@@ -15,6 +15,7 @@ const GUILD_CONFIG_DEFAULTS = {
     dmOnClose: true,
     disabledCommands: {},
     disabledCategories: {},
+    permissionTemplates: [],
     shitAnnounce: {
         channelId: null,
         displayName: 'Brolge',
@@ -24,6 +25,22 @@ const GUILD_CONFIG_DEFAULTS = {
         channels: { audit: null, applications: null, reports: null },
         ignore: { users: [], channels: [] },
         enabledEvents: {},
+    },
+    lockdown: {
+        antiNukeEnabled: false,
+        quarantineRoleId: null,
+        trustedUserIds: [],
+        trustedRoleIds: [],
+        restrictions: {
+            messaging: true,
+            reactions: true,
+            publicThreads: true,
+            privateThreads: true,
+            threadMessages: true,
+        },
+        active: false,
+        snapshot: null,
+        quarantinedMembers: {},
     },
 };
 

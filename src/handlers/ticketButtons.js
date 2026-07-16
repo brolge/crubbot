@@ -8,6 +8,7 @@ import { InteractionHelper } from '../utils/interactionHelper.js';
 import { checkRateLimit } from '../utils/rateLimiter.js';
 import { replyUserError, ErrorTypes } from '../utils/errorHandler.js';
 import { getTicketPermissionContext } from '../utils/ticketPermissions.js';
+import { findTicketType } from '../utils/ticketTypes.js';
 
 function escapeHtml(text) {
   if (!text) return '';
@@ -147,7 +148,7 @@ const createTicketHandler = {
 
 const createTicketModalHandler = {
   name: 'create_ticket_modal',
-  async execute(interaction, client) {
+  async execute(interaction, client, args = []) {
     try {
       if (!(await ensureGuildContext(interaction))) return;
 
@@ -156,13 +157,21 @@ const createTicketModalHandler = {
       
       const reason = interaction.fields.getTextInputValue('reason');
       const config = await getGuildConfig(client, interaction.guildId);
-      const categoryId = config.ticketCategoryId || null;
+      const typeId = args[0] || null;
+      const ticketType = typeId ? findTicketType(config, typeId) : null;
+      if (typeId && (!ticketType || !ticketType.enabled)) {
+        await replyUserError(interaction, { type: ErrorTypes.VALIDATION, message: 'That ticket type is no longer available.' });
+        return;
+      }
+      const categoryId = ticketType?.categoryId || config.ticketCategoryId || null;
       
       const result = await createTicket(
         interaction.guild,
         interaction.member,
         categoryId,
-        reason
+        reason,
+        'none',
+        ticketType,
       );
       
       if (result.success) {

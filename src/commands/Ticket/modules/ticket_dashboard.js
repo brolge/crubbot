@@ -26,10 +26,16 @@ import { getGuildTicketStats } from '../../../utils/database/tickets.js';
 import { getUserTicketCount } from '../../../services/ticket.js';
 import {
     getTicketPanelStatus,
-    messageHasButtonCustomId,
+    messageHasPanelMarker,
     formatPanelStatusField,
 } from '../../../utils/panelStatus.js';
 import { startDashboardSession } from '../../../utils/dashboardSession.js';
+import {
+    MAX_TICKET_TYPES,
+    buildTicketPanelComponents,
+    getTicketTypes,
+    normalizeTicketType,
+} from '../../../utils/ticketTypes.js';
 
 function buildButtonRow(guildConfig, guildId, disabled = false, panelStatus = null) {
     const dmEnabled = guildConfig.dmOnClose !== false;
@@ -88,6 +94,9 @@ function buildPanelEmbed(config) {
 }
 
 function buildPanelButtonRow(config) {
+    const typedComponents = buildTicketPanelComponents(config);
+    if (typedComponents) return typedComponents[0];
+
     return new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId('create_ticket')
@@ -139,6 +148,10 @@ function buildDashboardEmbed(config, guild, panelStatus = null, ticketStats = nu
     const rawMsg = config.ticketPanelMessage || 'Click the button below to create a support ticket.';
     const panelMsg = `\`${rawMsg.length > 60 ? rawMsg.substring(0, 60) + '…' : rawMsg}\``;
     const btnLabel = `\`${config.ticketButtonLabel || 'Create Ticket'}\``;
+    const ticketTypes = getTicketTypes(config);
+    const typeSummary = ticketTypes.length
+        ? ticketTypes.map(type => `${type.enabled ? '✅' : '⏸️'} ${type.emoji || '🎫'} **${type.label}** (\`${type.id}\`)`).join('\n').slice(0, 1024)
+        : '`Legacy button panel`';
 
     let panelStatusValue = formatPanelStatusField(panelStatus);
 
@@ -162,6 +175,7 @@ function buildDashboardEmbed(config, guild, panelStatus = null, ticketStats = nu
             { name: '\u200B', value: '\u200B', inline: true },
             { name: 'Panel Message', value: panelMsg, inline: false },
             { name: 'Button Label', value: btnLabel, inline: true },
+            { name: `Ticket Types (${ticketTypes.length}/${MAX_TICKET_TYPES})`, value: typeSummary, inline: false },
             { name: 'Max Tickets/User', value: String(config.maxTicketsPerUser || 3), inline: true },
             { name: 'DM on Close', value: config.dmOnClose !== false ? 'Enabled' : 'Disabled', inline: true },
             { name: 'Ticket Logs Channel', value: ticketLogsChannel, inline: true },
@@ -215,6 +229,21 @@ function buildSelectMenu(guildId) {
                 .setDescription('Channel to receive auto-generated transcripts on deletion')
                 .setValue('transcript_channel')
                 .setEmoji('📜'),
+            new StringSelectMenuOptionBuilder()
+                .setLabel('Add Ticket Type')
+                .setDescription('Add a typed dropdown option')
+                .setValue('type_add')
+                .setEmoji('➕'),
+            new StringSelectMenuOptionBuilder()
+                .setLabel('Edit Ticket Type')
+                .setDescription('Customize an existing ticket type')
+                .setValue('type_edit')
+                .setEmoji('✏️'),
+            new StringSelectMenuOptionBuilder()
+                .setLabel('Delete Ticket Type')
+                .setDescription('Remove a typed dropdown option')
+                .setValue('type_delete')
+                .setEmoji('➖'),
         );
 }
 
@@ -317,6 +346,15 @@ export default {
                             break;
                         case 'transcript_channel':
                             await handleTranscriptChannel(selectInteraction, interaction, guildConfig, guildId, client);
+                            break;
+                        case 'type_add':
+                            await handleTicketTypeAdd(selectInteraction, interaction, guildConfig, guildId, client);
+                            break;
+                        case 'type_edit':
+                            await handleTicketTypePick(selectInteraction, interaction, guildConfig, guildId, client, 'edit');
+                            break;
+                        case 'type_delete':
+                            await handleTicketTypePick(selectInteraction, interaction, guildConfig, guildId, client, 'delete');
                             break;
                     }
                 },
@@ -956,6 +994,7 @@ async function handleDeleteSystem(btnInteraction, rootInteraction, guildConfig, 
         'ticketButtonLabel',
         'maxTicketsPerUser',
         'dmOnClose',
+        'ticketTypes',
     ];
 
     if (guildConfig.ticketPanelChannelId) {
@@ -970,7 +1009,10 @@ async function handleDeleteSystem(btnInteraction, rootInteraction, guildConfig, 
                     const messages = await panelChannel.messages.fetch({ limit: 50 }).catch(() => null);
                     if (messages) {
                         const found = messages.find(
-                            m => m.author.id === client.user.id && messageHasButtonCustomId(m, 'create_ticket'),
+                            m => m.author.id === client.user.id && messageHasPanelMarker(m, {
+                                buttonCustomId: 'create_ticket',
+                                selectCustomId: 'create_ticket_type',
+                            }),
                         );
                         if (found) await found.delete().catch(() => {});
                     }
@@ -1018,4 +1060,169 @@ async function handleDeleteSystem(btnInteraction, rootInteraction, guildConfig, 
         ],
         components: [],
     }).catch(() => {});
+}
+
+function buildTicketTypeModal(type = null) {
+    const current = type || {
+        id: '', label: '', emoji: '', enabled: true, description: '',
+        categoryId: '', logChannelId: '', staffRoleIds: [], welcomeText: '',
+    };
+    const value = (text, fallback = '') => String(text ?? fallback).slice(0, 4000);
+
+    return new ModalBuilder()
+        .setCustomId(`ticket_cfg_type_modal:${type?.id || 'new'}`)
+        .setTitle(type ? 'Edit Ticket Type' : 'Add Ticket Type')
+        .addComponents(
+            new ActionRowBuilder().addComponents(new TextInputBuilder()
+                .setCustomId('identity')
+                .setLabel('ID | Label | Emoji | Enabled (true/false)')
+                .setStyle(TextInputStyle.Short)
+                .setValue(value(`${current.id} | ${current.label} | ${current.emoji || ''} | ${current.enabled !== false}`))
+                .setRequired(true)
+                .setMaxLength(300)),
+            new ActionRowBuilder().addComponents(new TextInputBuilder()
+                .setCustomId('description')
+                .setLabel('Dropdown description (optional)')
+                .setStyle(TextInputStyle.Short)
+                .setValue(value(current.description))
+                .setRequired(false)
+                .setMaxLength(100)),
+            new ActionRowBuilder().addComponents(new TextInputBuilder()
+                .setCustomId('routing')
+                .setLabel('Category ID | Log channel ID')
+                .setStyle(TextInputStyle.Short)
+                .setValue(value(`${current.categoryId || ''} | ${current.logChannelId || ''}`))
+                .setRequired(false)
+                .setMaxLength(100)),
+            new ActionRowBuilder().addComponents(new TextInputBuilder()
+                .setCustomId('roles')
+                .setLabel('Staff role IDs (comma-separated)')
+                .setStyle(TextInputStyle.Short)
+                .setValue(value(current.staffRoleIds?.join(', ')))
+                .setRequired(false)
+                .setMaxLength(1000)),
+            new ActionRowBuilder().addComponents(new TextInputBuilder()
+                .setCustomId('welcome')
+                .setLabel('Welcome text (optional)')
+                .setStyle(TextInputStyle.Paragraph)
+                .setValue(value(current.welcomeText))
+                .setRequired(false)
+                .setMaxLength(2000)),
+        );
+}
+
+function ticketTypeFromModal(submitted) {
+    const [id = '', label = '', emoji = '', enabled = 'true'] =
+        submitted.fields.getTextInputValue('identity').split('|').map(part => part.trim());
+    const [categoryId = '', logChannelId = ''] =
+        submitted.fields.getTextInputValue('routing').split('|').map(part => part.trim());
+
+    return normalizeTicketType({
+        id,
+        label,
+        emoji,
+        enabled,
+        description: submitted.fields.getTextInputValue('description'),
+        categoryId,
+        logChannelId,
+        staffRoleIds: submitted.fields.getTextInputValue('roles'),
+        welcomeText: submitted.fields.getTextInputValue('welcome'),
+    });
+}
+
+async function saveTicketTypeModal(sourceInteraction, rootInteraction, guildConfig, guildId, client, existingId = null) {
+    await sourceInteraction.showModal(buildTicketTypeModal(
+        existingId ? getTicketTypes(guildConfig).find(type => type.id === existingId) : null,
+    ));
+    const submitted = await sourceInteraction.awaitModalSubmit({
+        filter: i => i.customId === `ticket_cfg_type_modal:${existingId || 'new'}` && i.user.id === sourceInteraction.user.id,
+        time: 120_000,
+    }).catch(() => null);
+    if (!submitted) return;
+
+    const nextType = ticketTypeFromModal(submitted);
+    const types = getTicketTypes(guildConfig);
+    const duplicate = types.some(type => type.id === nextType.id && type.id !== existingId);
+    if (!nextType.id || !nextType.label || duplicate) {
+        await replyUserError(submitted, {
+            type: ErrorTypes.VALIDATION,
+            message: duplicate
+                ? 'Ticket type IDs must be unique.'
+                : 'Ticket type ID and label are required. Use `ID | Label | Emoji | Enabled`.',
+        });
+        return;
+    }
+
+    if (!existingId && types.length >= MAX_TICKET_TYPES) {
+        await replyUserError(submitted, {
+            type: ErrorTypes.VALIDATION,
+            message: `A maximum of ${MAX_TICKET_TYPES} ticket types is supported.`,
+        });
+        return;
+    }
+
+    guildConfig.ticketTypes = existingId
+        ? types.map(type => type.id === existingId ? nextType : type)
+        : [...types, nextType];
+    await client.db.set(getGuildConfigKey(guildId), guildConfig);
+    const panelUpdated = await updateLivePanel(client, rootInteraction.guild, guildConfig, guildId);
+    await submitted.reply({
+        embeds: [successEmbed('Ticket Type Saved', `**${nextType.label}** is now ${nextType.enabled ? 'enabled' : 'disabled'}.${panelUpdated ? '\nThe live panel was refreshed.' : ''}`)],
+        flags: MessageFlags.Ephemeral,
+    });
+    await refreshDashboard(rootInteraction, guildConfig, guildId, client);
+}
+
+async function handleTicketTypeAdd(selectInteraction, rootInteraction, guildConfig, guildId, client) {
+    await saveTicketTypeModal(selectInteraction, rootInteraction, guildConfig, guildId, client);
+}
+
+async function handleTicketTypePick(selectInteraction, rootInteraction, guildConfig, guildId, client, action) {
+    const types = getTicketTypes(guildConfig);
+    if (!types.length) {
+        await selectInteraction.reply({
+            embeds: [infoEmbed('No Ticket Types', 'Add a ticket type first.')],
+            flags: MessageFlags.Ephemeral,
+        });
+        return;
+    }
+
+    await selectInteraction.deferUpdate();
+    const pickerId = `ticket_cfg_type_pick_${action}`;
+    const picker = new StringSelectMenuBuilder()
+        .setCustomId(pickerId)
+        .setPlaceholder(`Choose a type to ${action}...`)
+        .addOptions(types.map(type => ({
+            label: type.label,
+            value: type.id,
+            description: type.description || undefined,
+            emoji: type.emoji || undefined,
+        })));
+    await selectInteraction.followUp({
+        components: [new ActionRowBuilder().addComponents(picker)],
+        flags: MessageFlags.Ephemeral,
+    });
+
+    const collector = rootInteraction.channel.createMessageComponentCollector({
+        componentType: ComponentType.StringSelect,
+        filter: i => i.user.id === selectInteraction.user.id && i.customId === pickerId,
+        time: 60_000,
+        max: 1,
+    });
+    collector.on('collect', async picked => {
+        const typeId = picked.values[0];
+        if (action === 'edit') {
+            await saveTicketTypeModal(picked, rootInteraction, guildConfig, guildId, client, typeId);
+            return;
+        }
+        await picked.deferUpdate();
+        guildConfig.ticketTypes = types.filter(type => type.id !== typeId);
+        await client.db.set(getGuildConfigKey(guildId), guildConfig);
+        await updateLivePanel(client, rootInteraction.guild, guildConfig, guildId);
+        await picked.followUp({
+            embeds: [successEmbed('Ticket Type Deleted', `Removed ticket type \`${typeId}\`.`)],
+            flags: MessageFlags.Ephemeral,
+        });
+        await refreshDashboard(rootInteraction, guildConfig, guildId, client);
+    });
 }

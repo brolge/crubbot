@@ -6,11 +6,17 @@ import {
     saveTicketData
 } from '../utils/database.js';
 import { getServerCounters, saveServerCounters } from '../services/serverstatsService.js';
+import { handleChannelDeletion } from '../services/lockdownService.js';
 import { logger } from '../utils/logger.js';
 
 export default {
     name: 'channelDelete',
     async execute(channel, client) {
+        try {
+            await handleChannelDeletion(client, channel);
+        } catch (error) {
+            logger.error(`Anti-nuke channel deletion handling failed for guild ${channel.guild?.id || 'unknown'}:`, error);
+        }
         
         if (channel.type === 0 && channel.guild) {
             try {

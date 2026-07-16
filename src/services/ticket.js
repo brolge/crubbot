@@ -61,7 +61,7 @@ export async function getUserTicketCount(guildId, userId) {
   }
 }
 
-export async function createTicket(guild, member, categoryId, reason = 'No reason provided', priority = 'none') {
+export async function createTicket(guild, member, categoryId, reason = 'No reason provided', priority = 'none', ticketType = null) {
   try {
     const config = await getGuildConfig(guild.client, guild.id);
     const ticketConfig = config.tickets || {};
@@ -107,6 +107,9 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
       }
     }
     
+    const staffRoleIds = ticketType
+      ? ticketType.staffRoleIds || []
+      : (config.ticketStaffRoleId ? [config.ticketStaffRoleId] : []);
     const channel = await guild.channels.create({
       name: channelName,
       type: ChannelType.GuildText,
@@ -125,15 +128,15 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
             PermissionFlagsBits.ReadMessageHistory,
           ],
         },
-        ...(config.ticketStaffRoleId ? [{
-          id: config.ticketStaffRoleId,
+        ...staffRoleIds.map(roleId => ({
+          id: roleId,
           allow: [
             PermissionFlagsBits.ViewChannel,
             PermissionFlagsBits.SendMessages,
             PermissionFlagsBits.AttachFiles,
             PermissionFlagsBits.ReadMessageHistory,
           ],
-        }] : []),
+        })),
       ],
     });
     
@@ -146,6 +149,18 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
       claimedBy: null,
       priority: priority || 'none',
       reason,
+      typeId: ticketType?.id || null,
+      typeSnapshot: ticketType ? {
+        id: ticketType.id,
+        label: ticketType.label,
+        description: ticketType.description || '',
+        emoji: ticketType.emoji || null,
+        categoryId: ticketType.categoryId || null,
+        logChannelId: ticketType.logChannelId || null,
+        welcomeText: ticketType.welcomeText || '',
+        enabled: ticketType.enabled !== false,
+        staffRoleIds: [...staffRoleIds],
+      } : null,
     };
     
     await saveTicketData(guild.id, channel.id, ticketData);
@@ -154,7 +169,7 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
     
     const embed = createEmbed({
       title: `Ticket #${ticketNumber}`,
-      description: `${member.toString()}, thanks for creating a ticket!\n\n**Reason:** ${reason}\n**Priority:** ${priorityInfo.emoji} ${priorityInfo.label}`,
+      description: `${ticketType?.welcomeText || `${member.toString()}, thanks for creating a ticket!`}\n\n${ticketType ? `**Type:** ${ticketType.emoji || '🎫'} ${ticketType.label}\n` : ''}**Reason:** ${reason}\n**Priority:** ${priorityInfo.emoji} ${priorityInfo.label}`,
       color: priorityInfo.color,
       fields: [
         { name: 'Status', value: '🟢 Open', inline: true },
@@ -180,8 +195,8 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
       );
     }
     
-    const staffMention = config.ticketStaffRoleId ? ` <@&${config.ticketStaffRoleId}>` : '';
-    const messageContent = `${member.toString()}${staffMention}`;
+    const staffMention = staffRoleIds.map(roleId => `<@&${roleId}>`).join(' ');
+    const messageContent = `${member.toString()}${staffMention ? ` ${staffMention}` : ''}`;
     
     const ticketMessage = await channel.send({ 
       content: messageContent,
@@ -196,6 +211,7 @@ export async function createTicket(guild, member, categoryId, reason = 'No reaso
       guildId: guild.id,
       event: {
         type: 'open',
+        logChannelId: ticketType?.logChannelId || null,
         ticketId: channel.id,
         ticketNumber: ticketNumber,
         userId: member.id,
@@ -398,6 +414,7 @@ components: []
       guildId: channel.guild.id,
       event: {
         type: 'close',
+        logChannelId: ticketData.typeSnapshot?.logChannelId || null,
         ticketId: channel.id,
         ticketNumber: ticketData.id,
         userId: ticketData.userId,
@@ -507,6 +524,7 @@ export async function claimTicket(channel, claimer) {
       guildId: channel.guild.id,
       event: {
         type: 'claim',
+        logChannelId: ticketData.typeSnapshot?.logChannelId || null,
         ticketId: channel.id,
         ticketNumber: ticketData.id,
         userId: ticketData.userId,
@@ -787,6 +805,7 @@ export async function deleteTicket(channel, deleter) {
       guildId: channel.guild.id,
       event: {
         type: 'delete',
+        logChannelId: ticketData.typeSnapshot?.logChannelId || null,
         ticketId: channel.id,
         ticketNumber: ticketData.id,
         userId: ticketData.userId,
@@ -1018,6 +1037,7 @@ export async function unclaimTicket(channel, unclaimer) {
       guildId: channel.guild.id,
       event: {
         type: 'unclaim',
+        logChannelId: ticketData.typeSnapshot?.logChannelId || null,
         ticketId: channel.id,
         ticketNumber: ticketData.id,
         userId: ticketData.userId,
@@ -1124,6 +1144,7 @@ export async function updateTicketPriority(channel, priority, updater) {
       guildId: channel.guild.id,
       event: {
         type: 'priority',
+        logChannelId: ticketData.typeSnapshot?.logChannelId || null,
         ticketId: channel.id,
         ticketNumber: ticketData.id,
         userId: ticketData.userId,

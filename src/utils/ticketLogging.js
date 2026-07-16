@@ -19,7 +19,7 @@ export async function logTicketEvent({ client, guildId, event }) {
 
     const config = await getGuildConfig(client, guildId);
 
-    const logChannelId = getLogChannelForEventType(config, event.type);
+    const logChannelId = event.logChannelId || getLogChannelForEventType(config, event.type);
     if (!logChannelId) {
       return;
     }

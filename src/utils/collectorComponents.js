@@ -3,6 +3,7 @@ const COLLECTOR_MANAGED_PREFIXES = [
   'config_select',
   'config_wizard',
   'cmdaccess_',
+  'perm_dash_',
 ];
 
 export function isCollectorManagedComponent(customId = '') {

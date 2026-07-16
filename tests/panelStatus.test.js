@@ -142,3 +142,26 @@ test('getTicketPanelStatus delegates to ticket config fields', async () => {
     assert.equal(captured, 'panel-ch');
     assert.equal(status.reason, 'panel_deleted');
 });
+
+test('getTicketPanelStatus recognizes typed dropdown panels', async () => {
+    const panelMessage = {
+        id: 'typed-panel',
+        components: [{ type: 1, components: [{ type: 3, custom_id: 'create_ticket_type' }] }],
+    };
+    const client = { user: { id: 'bot' } };
+    const guild = {
+        channels: {
+            fetch: async () => ({
+                messages: { fetch: async () => panelMessage },
+            }),
+        },
+    };
+
+    const status = await getTicketPanelStatus(client, guild, {
+        ticketPanelChannelId: 'panel-ch',
+        ticketPanelMessageId: 'typed-panel',
+    });
+
+    assert.equal(status.exists, true);
+    assert.equal(status.message.id, 'typed-panel');
+});
