@@ -18,6 +18,7 @@ import {
 } from '../../utils/database.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import appDashboard from './modules/app_dashboard.js';
+import { handleApplicationQuestionsManager } from './modules/app_questions_manager.js';
 import { chunkAnswersForEmbed } from '../../utils/applicationQuestions.js';
 
 function getApplicationStatusPresentation(statusValue) {
@@ -261,15 +262,30 @@ async function handleSetup(interaction) {
     await submitted.reply({
         embeds: [successEmbed(
             '✅ Application Created',
-            `**${appName}** application has been created for ${role}.\n\nStarter questions are set. Use the dashboard **Edit Questions** to add up to 25 (staff apps, etc). You can also customize the log channel, manager roles, and retention.`,
+            `**${appName}** application has been created for ${role}.
+
+Starter questions saved. A questions editor will open next — use **Bulk Add** to paste up to 25 questions (one per line).`,
         )],
         flags: ['Ephemeral'],
     });
 
-    setTimeout(() => {
-        appDashboard.execute(submitted, null, interaction.client, appName);
-    }, 500);
+    const freshSettings = await getApplicationSettings(interaction.client, interaction.guild.id);
+    const freshRoles = await getApplicationRoles(interaction.client, interaction.guild.id);
+
+    await handleApplicationQuestionsManager({
+        selectInteraction: submitted,
+        rootInteraction: submitted,
+        settings: freshSettings,
+        roles: freshRoles,
+        guildId: interaction.guild.id,
+        client: interaction.client,
+        selectedRoleId: roleId,
+        refreshDashboard: null,
+        replyMode: 'followUp',
+    });
+
 }
+
 
 async function handleReview(interaction) {
     const appId = interaction.options.getString("id");

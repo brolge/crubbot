@@ -86,7 +86,7 @@ export async function handleList(interaction, client) {
             }
 
             const currentCount = getCurrentCount(stats, counter.type);
-            const status = channel.name.includes(':') ? '✅ Active' : '⚠️ Not Updated';
+            const status = (channel.name.includes('『📊』') || channel.name.includes(':')) ? '✅ Active' : '⚠️ Not Updated';
             
             embed.addFields({
                 name: `${getCounterTypeEmoji(counter.type)} Counter #${i + 1} - ${channel.name}`,
@@ -99,7 +99,7 @@ export async function handleList(interaction, client) {
             name: "**Statistics**",
             value: `**Total Counters:** ${validCounters.length}\n**Active Counters:** ${validCounters.filter(c => {
                 const channel = guild.channels.cache.get(c.channelId);
-                return channel && channel.name.includes(':');
+                return channel && (channel.name.includes('『📊』') || channel.name.includes(':'));
             }).length}\n**Next Update:** <t:${Math.floor(Date.now() / 1000) + 900}:R>`,
             inline: false
         });
@@ -139,6 +139,8 @@ function getCurrentCount(stats, type) {
             return stats.botCount;
         case "members_only":
             return stats.humanCount;
+        case "boosts":
+            return stats.boostCount;
         default:
             return 0;
     }

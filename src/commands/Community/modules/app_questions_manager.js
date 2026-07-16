@@ -1,4 +1,4 @@
-﻿import {
+import {
   ActionRowBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
@@ -29,7 +29,7 @@ import {
 function buildManagerPayload(managerId, questions) {
   const list = questions.length > 0
     ? questions.map((q, i) => `**${i + 1}.** ${q}`).join('\n')
-    : '_No questions yet - add at least one._';
+    : '_No questions yet — add at least one._';
 
   const embed = new EmbedBuilder()
     .setTitle('Application Questions')
@@ -38,10 +38,11 @@ function buildManagerPayload(managerId, questions) {
       `**${questions.length}/${MAX_APPLICATION_QUESTIONS}** questions` +
       (questions.length > 5
         ? '\nApplicants answer in pages of 5 (Discord modal limit).'
-        : ''),
+        : '') +
+      '\n\nUse **Bulk Add** to paste many questions at once (one per line). Changes save automatically.',
     )
     .setColor(getColor('info'))
-    .setFooter({ text: 'Add · Edit · Delete · Move · Done' });
+    .setFooter({ text: 'Add · Bulk Add · Edit · Delete · Move · Close' });
 
   const canAdd = questions.length < MAX_APPLICATION_QUESTIONS;
   const hasQuestions = questions.length > 0;
@@ -50,6 +51,11 @@ function buildManagerPayload(managerId, questions) {
     new ButtonBuilder()
       .setCustomId(`${managerId}_add`)
       .setLabel('Add')
+      .setStyle(ButtonStyle.Success)
+      .setDisabled(!canAdd),
+    new ButtonBuilder()
+      .setCustomId(`${managerId}_bulk`)
+      .setLabel('Bulk Add')
       .setStyle(ButtonStyle.Success)
       .setDisabled(!canAdd),
     new ButtonBuilder()
@@ -77,7 +83,7 @@ function buildManagerPayload(managerId, questions) {
       .setDisabled(questions.length < 2),
     new ButtonBuilder()
       .setCustomId(`${managerId}_done`)
-      .setLabel('Done')
+      .setLabel('Close')
       .setStyle(ButtonStyle.Primary),
   );
 
@@ -134,12 +140,17 @@ export async function handleApplicationQuestionsManager({
   client,
   selectedRoleId,
   refreshDashboard,
+  replyMode = 'reply',
 }) {
   let workingQuestions = normalizeQuestions(settings.questions ?? []);
 
   if (selectedRoleId) {
     const roleSettings = await getApplicationRoleSettings(client, guildId, selectedRoleId);
-    workingQuestions = normalizeQuestions(roleSettings.questions ?? workingQuestions);
+    workingQuestions = normalizeQuestions(
+      Array.isArray(roleSettings.questions) && roleSettings.questions.length > 0
+        ? roleSettings.questions
+        : workingQuestions,
+    );
   }
 
   const scopeKey = selectedRoleId || 'global';
@@ -158,13 +169,33 @@ export async function handleApplicationQuestionsManager({
     return normalized;
   };
 
-  await selectInteraction.reply(buildManagerPayload(managerId, workingQuestions));
+  let managerMessage;
+  if (replyMode === 'followUp') {
+    managerMessage = await selectInteraction.followUp(buildManagerPayload(managerId, workingQuestions));
+  } else if (replyMode === 'edit') {
+    await selectInteraction.editReply(buildManagerPayload(managerId, workingQuestions));
+    managerMessage = await selectInteraction.fetchReply();
+  } else {
+    await selectInteraction.reply(buildManagerPayload(managerId, workingQuestions));
+    managerMessage = await selectInteraction.fetchReply();
+  }
 
-  const managerMessage = await selectInteraction.fetchReply();
-  const collector = managerMessage.createMessageComponentCollector({
+  const refreshManager = async () => {
+    const payload = buildManagerPayload(managerId, workingQuestions);
+    if (managerMessage?.edit) {
+      await managerMessage.edit(payload).catch(async () => {
+        await selectInteraction.editReply(payload).catch(() => {});
+      });
+    } else {
+      await selectInteraction.editReply(payload).catch(() => {});
+    }
+  };
+
+  const collector = selectInteraction.channel.createMessageComponentCollector({
     filter: (i) =>
       i.user.id === selectInteraction.user.id &&
-      i.customId.startsWith(managerId),
+      i.customId.startsWith(managerId) &&
+      !i.customId.endsWith('_pick'),
     time: 600_000,
   });
 
@@ -173,20 +204,12 @@ export async function handleApplicationQuestionsManager({
       const action = btnInteraction.customId.slice(managerId.length + 1);
 
       if (action === 'done') {
-        if (workingQuestions.length === 0) {
-          await replyUserError(btnInteraction, {
-            type: ErrorTypes.USER_INPUT,
-            message: 'Add at least one question before finishing.',
-          });
-          return;
-        }
-
         workingQuestions = await persistQuestions(workingQuestions);
         collector.stop('done');
         await btnInteraction.update({
           embeds: [
             successEmbed(
-              'Questions Updated',
+              'Questions Saved',
               `${workingQuestions.length} question${workingQuestions.length !== 1 ? 's' : ''} saved.` +
               (workingQuestions.length > 5
                 ? '\nApplicants will complete them across multiple pages.'
@@ -195,7 +218,73 @@ export async function handleApplicationQuestionsManager({
           ],
           components: [],
         });
-        await refreshDashboard(rootInteraction, settings, roles, guildId, client);
+        if (typeof refreshDashboard === 'function') {
+          await refreshDashboard(rootInteraction, settings, roles, guildId, client);
+        }
+        return;
+      }
+
+      if (action === 'bulk') {
+        const remaining = MAX_APPLICATION_QUESTIONS - workingQuestions.length;
+        if (remaining <= 0) {
+          await replyUserError(btnInteraction, {
+            type: ErrorTypes.VALIDATION,
+            message: `Maximum of ${MAX_APPLICATION_QUESTIONS} questions reached.`,
+          });
+          return;
+        }
+
+        const modal = new ModalBuilder()
+          .setCustomId(`${managerId}_bulk_modal`)
+          .setTitle('Bulk Add Questions')
+          .addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder()
+                .setCustomId('bulk_q')
+                .setLabel(`One question per line (max ${remaining} more)`)
+                .setStyle(TextInputStyle.Paragraph)
+                .setRequired(true)
+                .setMaxLength(Math.min(4000, remaining * (MAX_QUESTION_PROMPT + 1)))
+                .setPlaceholder('Why do you want this role?\nWhat experience do you have?\nHow many hours can you dedicate?'),
+            ),
+          );
+
+        await btnInteraction.showModal(modal);
+        const submitted = await btnInteraction.awaitModalSubmit({
+          filter: (i) =>
+            i.customId === `${managerId}_bulk_modal` &&
+            i.user.id === selectInteraction.user.id,
+          time: 180_000,
+        }).catch(() => null);
+
+        if (!submitted) return;
+
+        const lines = submitted.fields.getTextInputValue('bulk_q')
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+
+        if (lines.length === 0) {
+          await replyUserError(submitted, {
+            type: ErrorTypes.USER_INPUT,
+            message: 'Paste at least one question (one per line).',
+          });
+          return;
+        }
+
+        const before = workingQuestions.length;
+        workingQuestions = normalizeQuestions([...workingQuestions, ...lines]);
+        workingQuestions = await persistQuestions(workingQuestions);
+        const added = workingQuestions.length - before;
+
+        await submitted.reply({
+          embeds: [successEmbed(
+            'Questions Added',
+            `Saved **${added}** new question${added !== 1 ? 's' : ''}. Total: **${workingQuestions.length}/${MAX_APPLICATION_QUESTIONS}**.`,
+          )],
+          flags: MessageFlags.Ephemeral,
+        });
+        await refreshManager();
         return;
       }
 
@@ -212,7 +301,7 @@ export async function handleApplicationQuestionsManager({
         const slots = Math.min(5, remaining);
         const modal = new ModalBuilder()
           .setCustomId(`${managerId}_add_modal`)
-          .setTitle(`Add Questions (${slots} slot${slots !== 1 ? 's' : ''})`);
+          .setTitle(`Add Questions (${slots} slots)`);
 
         for (let i = 0; i < slots; i += 1) {
           modal.addComponents(
@@ -252,11 +341,15 @@ export async function handleApplicationQuestionsManager({
         }
 
         workingQuestions = normalizeQuestions([...workingQuestions, ...added]);
+        workingQuestions = await persistQuestions(workingQuestions);
         await submitted.reply({
-          embeds: [successEmbed('Questions Added', `Added ${added.length}. Click **Done** to save.`)],
+          embeds: [successEmbed(
+            'Questions Added',
+            `Saved **${added.length}**. Total: **${workingQuestions.length}/${MAX_APPLICATION_QUESTIONS}**.\nTip: use **Bulk Add** to paste many at once.`,
+          )],
           flags: MessageFlags.Ephemeral,
         });
-        await selectInteraction.editReply(buildManagerPayload(managerId, workingQuestions));
+        await refreshManager();
         return;
       }
 
@@ -269,7 +362,7 @@ export async function handleApplicationQuestionsManager({
           promptLabel: 'Choose a question to edit',
         });
         if (!picked) {
-          await selectInteraction.editReply(buildManagerPayload(managerId, workingQuestions)).catch(() => {});
+          await refreshManager();
           return;
         }
 
@@ -298,17 +391,17 @@ export async function handleApplicationQuestionsManager({
         }).catch(() => null);
 
         if (!submitted) {
-          await selectInteraction.editReply(buildManagerPayload(managerId, workingQuestions)).catch(() => {});
+          await refreshManager();
           return;
         }
 
         workingQuestions[index] = submitted.fields.getTextInputValue('edit_q').trim();
-        workingQuestions = normalizeQuestions(workingQuestions);
+        workingQuestions = await persistQuestions(workingQuestions);
         await submitted.reply({
-          embeds: [successEmbed('Question Updated', `Q${index + 1} updated. Click **Done** to save.`)],
+          embeds: [successEmbed('Question Updated', `Q${index + 1} saved.`)],
           flags: MessageFlags.Ephemeral,
         });
-        await selectInteraction.editReply(buildManagerPayload(managerId, workingQuestions));
+        await refreshManager();
         return;
       }
 
@@ -321,16 +414,16 @@ export async function handleApplicationQuestionsManager({
           promptLabel: 'Choose a question to delete',
         });
         if (!picked) {
-          await selectInteraction.editReply(buildManagerPayload(managerId, workingQuestions)).catch(() => {});
+          await refreshManager();
           return;
         }
 
         const { interaction: pickInteraction, index } = picked;
         const removed = workingQuestions.splice(index, 1)[0];
-        workingQuestions = normalizeQuestions(workingQuestions);
+        workingQuestions = await persistQuestions(workingQuestions);
         await pickInteraction.update(buildManagerPayload(managerId, workingQuestions));
         await pickInteraction.followUp({
-          embeds: [successEmbed('Question Removed', `Removed: ${removed}\nClick **Done** to save.`)],
+          embeds: [successEmbed('Question Removed', `Removed: ${removed}`)],
           flags: MessageFlags.Ephemeral,
         }).catch(() => {});
         return;
@@ -347,7 +440,7 @@ export async function handleApplicationQuestionsManager({
             : 'Choose a question to move down',
         });
         if (!picked) {
-          await selectInteraction.editReply(buildManagerPayload(managerId, workingQuestions)).catch(() => {});
+          await refreshManager();
           return;
         }
 
@@ -367,6 +460,7 @@ export async function handleApplicationQuestionsManager({
         const tmp = workingQuestions[index];
         workingQuestions[index] = workingQuestions[swapWith];
         workingQuestions[swapWith] = tmp;
+        workingQuestions = await persistQuestions(workingQuestions);
         await pickInteraction.update(buildManagerPayload(managerId, workingQuestions));
       }
     } catch (error) {

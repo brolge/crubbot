@@ -7,6 +7,7 @@ import { handleCreate } from './modules/serverstats_create.js';
 import { handleList } from './modules/serverstats_list.js';
 import { handleUpdate } from './modules/serverstats_update.js';
 import { handleDelete } from './modules/serverstats_delete.js';
+import { runServerStatsDashboard } from './modules/serverstats_dashboard.js';
 
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 export default {
@@ -14,6 +15,11 @@ export default {
         .setName("serverstats")
         .setDescription("Manage server statistics that track member counts and channel data")
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName("dashboard")
+                .setDescription("Configure stats channels (all-members, members, bots, boosts)")
+        )
         .addSubcommand(subcommand =>
             subcommand
                 .setName("create")
@@ -24,9 +30,10 @@ export default {
                         .setDescription("The type of statistics to track")
                         .setRequired(true)
                         .addChoices(
-                            { name: "members + bots", value: "members" },
+                            { name: "all members", value: "members" },
                             { name: "members only", value: "members_only" },
-                            { name: "bots only", value: "bots" }
+                            { name: "bots only", value: "bots" },
+                            { name: "boosts", value: "boosts" }
                         )
                 )
                 .addStringOption(option =>
@@ -68,9 +75,10 @@ export default {
                         .setDescription("The new tracker type")
                         .setRequired(false)
                         .addChoices(
-                            { name: "members + bots", value: "members" },
+                            { name: "all members", value: "members" },
                             { name: "members only", value: "members_only" },
-                            { name: "bots only", value: "bots" }
+                            { name: "bots only", value: "bots" },
+                            { name: "boosts", value: "boosts" }
                         )
                 )
         )
@@ -91,6 +99,10 @@ export default {
 
         try {
             switch (subcommand) {
+                case "dashboard":
+                    await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
+                    await runServerStatsDashboard(interaction, client);
+                    break;
                 case "create":
                     await handleCreate(interaction, client);
                     break;

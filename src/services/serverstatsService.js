@@ -6,27 +6,39 @@ import { formatLogLine } from '../utils/logEmbeds.js';
 
 export const COUNTER_TYPE_CONFIG = {
   members: {
-    label: 'Members + Bots',
+    label: 'All Members',
     baseName: 'Members & Bots',
-    emoji: '👥'
+    slug: 'all-members',
+    emoji: '📊',
   },
   members_only: {
-    label: 'Members Only',
+    label: 'Members',
     baseName: 'Members',
-    emoji: '👤'
+    slug: 'members',
+    emoji: '📊',
   },
   bots: {
-    label: 'Bots Only',
+    label: 'Bots',
     baseName: 'Bots',
-    emoji: '🤖'
-  }
+    slug: 'bots',
+    emoji: '📊',
+  },
+  boosts: {
+    label: 'Boosts',
+    baseName: 'Boosts',
+    slug: 'boosts',
+    emoji: '📊',
+  },
 };
+
+export const COUNTER_TYPE_ORDER = ['members', 'members_only', 'bots', 'boosts'];
 
 function getCounterConfig(type) {
   return COUNTER_TYPE_CONFIG[type] || {
     label: 'Unknown',
     baseName: 'Counter',
-    emoji: '❓'
+    slug: 'counter',
+    emoji: '❓',
   };
 }
 
@@ -40,6 +52,16 @@ export function getCounterBaseName(type) {
 
 export function getCounterEmoji(type) {
   return getCounterConfig(type).emoji;
+}
+
+export function getCounterSlug(type) {
+  return getCounterConfig(type).slug || 'counter';
+}
+
+/** Channel name style matching classic stats panels: 『📊』 all-members-68 */
+export function formatCounterChannelName(type, count) {
+  const slug = getCounterSlug(type);
+  return `『📊』 ${slug}-${count}`;
 }
 
 export async function getGuildCounterStats(guild) {
@@ -57,10 +79,15 @@ export async function getGuildCounterStats(guild) {
   const totalCount = typeof guild.memberCount === 'number' ? guild.memberCount : memberCollection.size;
   const humanCount = Math.max(totalCount - botCount, 0);
 
+  const boostCount = typeof guild.premiumSubscriptionCount === 'number'
+    ? guild.premiumSubscriptionCount
+    : 0;
+
   return {
     totalCount,
     botCount,
-    humanCount
+    humanCount,
+    boostCount,
   };
 }
 
@@ -74,6 +101,8 @@ export async function getCounterCount(guild, type) {
       return stats.botCount;
     case 'members_only':
       return stats.humanCount;
+    case 'boosts':
+      return stats.boostCount;
     default:
       return null;
   }
@@ -150,7 +179,7 @@ export async function updateCounter(client, guild, counter) {
       logger.debug(`Base name: "${baseName}", Current name: "${channel.name}"`);
     }
     
-    const newName = `${baseName}: ${count}`;
+    const newName = formatCounterChannelName(type, count);
     if (process.env.NODE_ENV !== 'production') {
       logger.debug(`New name would be: "${newName}"`);
     }
