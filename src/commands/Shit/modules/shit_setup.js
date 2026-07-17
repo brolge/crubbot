@@ -36,7 +36,7 @@ export default {
         return InteractionHelper.safeReply(interaction, {
             embeds: [successEmbed(
                 'Bathroom Announcements Ready',
-                `**${displayName}** announcements will post in ${channel}.\n\nRun \`/shit\` whenever it's go time.`,
+                `Announcements will post in ${channel}.\n\nWhoever runs \`/shit\` gets **@pinged** in the message. Go time.`,
             )],
             flags: MessageFlags.Ephemeral,
         });

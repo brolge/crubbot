@@ -9,7 +9,12 @@ export default {
     async execute(interaction, _config, client) {
         try {
             const settings = await getShitAnnounceSettings(client, interaction.guildId);
-            const { channel, message } = await postShitAnnouncement(client, interaction.guild, settings);
+            const { channel, message } = await postShitAnnouncement(
+                client,
+                interaction.guild,
+                settings,
+                interaction.user,
+            );
 
             return InteractionHelper.safeReply(interaction, {
                 embeds: [successEmbed('Posted', `Sent to ${channel}:\n> ${message}`)],

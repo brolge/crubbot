@@ -6,7 +6,7 @@ import shitGo from './modules/shit_go.js';
 export default {
     data: new SlashCommandBuilder()
         .setName('shit')
-        .setDescription('Announce that someone is ripping in the configured channel'),
+        .setDescription('Announce that YOU are ripping — pings you in the configured channel'),
 
     category: 'Shit',
 

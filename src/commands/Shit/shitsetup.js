@@ -6,7 +6,7 @@ import shitSetup from './modules/shit_setup.js';
 export default {
     data: new SlashCommandBuilder()
         .setName('shitsetup')
-        .setDescription('Configure the bathroom announce channel and name')
+        .setDescription('Configure the bathroom announce channel')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addChannelOption(option =>
             option
@@ -18,7 +18,7 @@ export default {
         .addStringOption(option =>
             option
                 .setName('name')
-                .setDescription('Name used in messages (default: Brolge)')
+                .setDescription('Fallback name only (messages normally @ the person who runs /shit)')
                 .setRequired(false)
                 .setMaxLength(32),
         ),

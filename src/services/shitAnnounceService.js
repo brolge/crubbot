@@ -6,6 +6,7 @@ import { wrapServiceBoundary } from '../utils/serviceErrorBoundary.js';
 export const DEFAULT_SHIT_DISPLAY_NAME = 'Brolge';
 
 const MESSAGE_TEMPLATES = [
+    // originals
     '{name} is shitting',
     '{name} is ripping on rn',
     '{name} is dropping bombs',
@@ -18,6 +19,22 @@ const MESSAGE_TEMPLATES = [
     '{name} is born to shit, forced to wipe',
     '{name} is making the bathroom uninhabitable',
     '{name} is going nuclear in there',
+    // dirty expansions
+    '{name} is mid shit and it smells like a crime scene',
+    '{name} just tore a hole in the fucking fabric of reality',
+    '{name} is clogging the toilet with pure evil',
+    '{name} is shitting so hard the walls are sweating',
+    '{name} dropped a deuce so nasty even god looked away',
+    '{name} is in there painting the bowl like a goddamn Picasso of piss and shit',
+    '{name} just ripped ass so loud it set off car alarms',
+    '{name} is making diarrhea stew and serving it raw',
+    '{name} is mid-wipe and already regretting every life choice',
+    '{name} just birthed a shit so thick it needs a fucking passport',
+    '{name} is flooding the bathroom with toxic swamp gas',
+    '{name} is on the toilet committing war crimes with their asshole',
+    '{name} just shit themselves into another dimension',
+    '{name} is blasting farts that could clear a stadium',
+    '{name} dropped something so foul the plumbing filed a restraining order',
 ];
 
 export function getShitAnnounceConfig(guildConfig) {
@@ -28,9 +45,9 @@ export function getShitAnnounceConfig(guildConfig) {
     };
 }
 
-export function pickShitMessage(displayName) {
+export function pickShitMessage(nameToken) {
     const template = MESSAGE_TEMPLATES[Math.floor(Math.random() * MESSAGE_TEMPLATES.length)];
-    return template.replaceAll('{name}', displayName);
+    return template.replaceAll('{name}', nameToken);
 }
 
 export const getShitAnnounceSettings = wrapServiceBoundary(async function getShitAnnounceSettings(client, guildId) {
@@ -62,7 +79,7 @@ export const saveShitAnnounceSettings = wrapServiceBoundary(async function saveS
     userMessage: 'Failed to save bathroom announce settings.',
 });
 
-export const postShitAnnouncement = wrapServiceBoundary(async function postShitAnnouncement(client, guild, settings) {
+export const postShitAnnouncement = wrapServiceBoundary(async function postShitAnnouncement(client, guild, settings, actor = null) {
     if (!settings?.channelId) {
         throw new CrubError(
             'Shit announce channel not configured',
@@ -90,10 +107,20 @@ export const postShitAnnouncement = wrapServiceBoundary(async function postShitA
         );
     }
 
-    const message = pickShitMessage(settings.displayName);
-    await channel.send(message);
+    const actorId = actor?.id || null;
+    const nameToken = actorId
+        ? `<@${actorId}>`
+        : (settings.displayName || DEFAULT_SHIT_DISPLAY_NAME);
+    const message = pickShitMessage(nameToken);
 
-    return { channel, message };
+    await channel.send({
+        content: message,
+        allowedMentions: actorId
+            ? { parse: [], users: [actorId] }
+            : { parse: [] },
+    });
+
+    return { channel, message, actorId };
 }, {
     service: 'shitAnnounceService',
     operation: 'postShitAnnouncement',
