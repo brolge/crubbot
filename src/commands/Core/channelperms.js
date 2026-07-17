@@ -1,18 +1,19 @@
 import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { handleInteractionError } from '../../utils/errorHandler.js';
-import { runPermissionsDashboard } from './modules/permissions_dashboard.js';
+import { runChannelPermsDashboard } from './modules/channelperms_dashboard.js';
 
 export default {
+  slashOnly: true,
   data: new SlashCommandBuilder()
-    .setName('permissions')
-    .setDescription('Reusable permission templates (for live toggles use /channelperms)')
+    .setName('channelperms')
+    .setDescription('Live channel permission board — toggle role perms and stop threats fast')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
     .setDMPermission(false)
     .addSubcommand((subcommand) =>
       subcommand
         .setName('dashboard')
-        .setDescription('Open the channel permission template dashboard')),
+        .setDescription('Open the live channel permission dashboard')),
   category: 'Core',
 
   async execute(interaction, config, client) {
@@ -27,9 +28,9 @@ export default {
 
       const deferred = await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
       if (!deferred) return;
-      await runPermissionsDashboard(interaction, client);
+      await runChannelPermsDashboard(interaction, client);
     } catch (error) {
-      await handleInteractionError(interaction, error, { commandName: 'permissions dashboard' });
+      await handleInteractionError(interaction, error, { commandName: 'channelperms dashboard' });
     }
   },
 };
