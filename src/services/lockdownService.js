@@ -209,6 +209,85 @@ export async function quarantineMember(client, guild, member, lockdown, reason) 
   return { removedRoleIds: snapshot, bounded: removable.length === MAX_QUARANTINE_ROLES };
 }
 
+export async function unquarantineMember(client, guild, userId, reason = 'Quarantine lifted') {
+  const lockdown = await getLockdownConfig(client, guild.id);
+  const record = lockdown.quarantinedMembers?.[userId];
+  if (!record) {
+    return { success: false, notQuarantined: true, restoredRoleIds: [], missingRoleIds: [], failures: [] };
+  }
+
+  let member;
+  try {
+    member = await guild.members.fetch(userId);
+  } catch {
+    // Still clear the record if they left the server.
+    await updateLockdownConfig(client, guild.id, (current) => {
+      const quarantinedMembers = { ...current.quarantinedMembers };
+      delete quarantinedMembers[userId];
+      return { ...current, quarantinedMembers };
+    });
+    return {
+      success: true,
+      leftServer: true,
+      restoredRoleIds: [],
+      missingRoleIds: record.roleIds || [],
+      failures: [],
+      record,
+    };
+  }
+
+  const quarantineRoleId = lockdown.quarantineRoleId;
+  const quarantineRole = quarantineRoleId ? guild.roles.cache.get(quarantineRoleId) : null;
+
+  const restoredRoleIds = [];
+  const missingRoleIds = [];
+  const failures = [];
+
+  for (const roleId of record.roleIds || []) {
+    if (roleId === guild.id || roleId === quarantineRoleId) continue;
+    const role = guild.roles.cache.get(roleId);
+    if (!role) {
+      missingRoleIds.push(roleId);
+      continue;
+    }
+    if (!role.editable || role.managed) {
+      failures.push(`${role.name}: not assignable by the bot`);
+      continue;
+    }
+    try {
+      if (!member.roles.cache.has(roleId)) {
+        await member.roles.add(role, reason);
+      }
+      restoredRoleIds.push(roleId);
+    } catch (error) {
+      failures.push(`${role.name}: ${error.message}`);
+    }
+  }
+
+  if (quarantineRole && member.roles.cache.has(quarantineRole.id) && quarantineRole.editable) {
+    try {
+      await member.roles.remove(quarantineRole, reason);
+    } catch (error) {
+      failures.push(`quarantine role: ${error.message}`);
+    }
+  }
+
+  await updateLockdownConfig(client, guild.id, (current) => {
+    const quarantinedMembers = { ...current.quarantinedMembers };
+    delete quarantinedMembers[userId];
+    return { ...current, quarantinedMembers };
+  });
+
+  return {
+    success: failures.length === 0,
+    restoredRoleIds,
+    missingRoleIds,
+    failures,
+    record,
+    member,
+  };
+}
+
 async function respondToAntiNukeTrigger(client, guild, {
   member,
   lockdown,
