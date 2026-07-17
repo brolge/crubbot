@@ -13,6 +13,13 @@ export const botConfig = {
     // Current online state shown on Discord.
     status: "online",
 
+    // Bot profile "About Me" (application description), synced on startup.
+    bio: [
+      "Developed By ChromaTech LTD",
+      "hey guys Brolge here",
+      "raefe is goated",
+    ].join("\n"),
+
     // Activity lines shown under the bot name.
     // `type` number mapping from Discord:
     // 0 = Playing
@@ -25,16 +32,8 @@ export const botConfig = {
     activityRotateMs: 20_000,
     activities: [
       {
-        name: "Developed By ChromaTech LTD",
+        name: "Blackout coming out never",
         type: 3, // Watching
-      },
-      {
-        name: "hey guys Brolge here",
-        type: 3,
-      },
-      {
-        name: "raefe is goated",
-        type: 3,
       },
     ],
   },

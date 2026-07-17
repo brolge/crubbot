@@ -35,6 +35,19 @@ export default {
         }, rotateMs).unref?.();
       }
 
+      // Sync the bot profile "About Me" with the configured bio.
+      if (presence.bio) {
+        try {
+          const application = await client.application.fetch();
+          if (application.description !== presence.bio) {
+            await application.edit({ description: presence.bio });
+            startupLog('Bot About Me synced from config');
+          }
+        } catch (error) {
+          logger.warn('Failed to sync bot About Me:', { error: error.message });
+        }
+      }
+
       startupLog(`Ready! Logged in as ${client.user.tag}`);
       startupLog(`Serving ${client.guilds.cache.size} guild(s)`);
       startupLog(`Loaded ${client.commands.size} commands`);
