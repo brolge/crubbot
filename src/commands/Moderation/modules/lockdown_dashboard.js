@@ -70,6 +70,11 @@ function buildStatusEmbed(config) {
       },
       { name: '\u200B', value: '\u200B', inline: true },
       {
+        name: 'Triggers',
+        value: 'Channels: **4** deletes / 10 min\nRoles: **4** deletes / 1 min (auto-enables anti-nuke + lockdown)',
+        inline: false,
+      },
+      {
         name: 'Quarantine Role',
         value: config.quarantineRoleId ? '<@&' + config.quarantineRoleId + '>' : '`Not set`',
         inline: true,

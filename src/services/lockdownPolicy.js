@@ -2,6 +2,9 @@ import { PermissionFlagsBits } from 'discord.js';
 
 export const ANTI_NUKE_WINDOW_MS = 10 * 60 * 1000;
 export const ANTI_NUKE_THRESHOLD = 4;
+/** Role mass-delete: more than 3 roles (= 4th) within 1 minute. */
+export const ANTI_NUKE_ROLE_WINDOW_MS = 60 * 1000;
+export const ANTI_NUKE_ROLE_THRESHOLD = 4;
 export const AUDIT_MATCH_MAX_AGE_MS = 20_000;
 
 export const DEFAULT_RESTRICTIONS = Object.freeze({

@@ -2,6 +2,7 @@ import { Events } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from '../utils/logger.js';
 import { buildRoleAuditLines } from '../utils/logEmbeds.js';
+import { handleRoleDeletion } from '../services/lockdownService.js';
 
 export default {
   name: Events.GuildRoleDelete,
@@ -10,6 +11,12 @@ export default {
   async execute(role) {
     try {
       if (!role.guild) return;
+
+      try {
+        await handleRoleDeletion(role.client, role);
+      } catch (error) {
+        logger.error(`Anti-nuke role deletion handling failed for guild ${role.guild.id}:`, error);
+      }
 
       const lines = buildRoleAuditLines(role, { includeMemberCount: true });
 

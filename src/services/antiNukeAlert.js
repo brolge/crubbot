@@ -3,7 +3,7 @@ import { getGuildConfig } from './guildConfig.js';
 import { logEvent, EVENT_TYPES } from './loggingService.js';
 import { logger } from '../utils/logger.js';
 
-function buildAntiNukeEmbed(guild, { executor, reason, quarantine, lockdownResult, deletedChannelId }) {
+function buildAntiNukeEmbed(guild, { executor, reason, quarantine, lockdownResult, deletedChannelId, deletedRoleId }) {
   const quarantineLine = quarantine?.error
     ? `Failed — ${quarantine.error}`
     : `Assigned quarantine role · removed ${quarantine?.removedRoleIds?.length || 0} role(s)`;
@@ -18,6 +18,7 @@ function buildAntiNukeEmbed(guild, { executor, reason, quarantine, lockdownResul
       `**Executor:** ${executor ? `${executor} (\`${executor.id}\`)` : 'Unknown'}`,
       `**Reason:** ${reason}`,
       deletedChannelId ? `**Last deleted channel ID:** \`${deletedChannelId}\`` : null,
+      deletedRoleId ? `**Last deleted role ID:** \`${deletedRoleId}\`` : null,
       `**Quarantine:** ${quarantineLine}`,
       `**Lockdown:** ${lockdownLine}`,
     ].filter(Boolean).join('\n'))
@@ -73,6 +74,7 @@ export async function sendAntiNukeAlert(client, guild, lockdown, payload) {
             `**Executor:** ${executor ? `${executor} (\`${executor.id}\`)` : 'Unknown'}`,
             `**Reason:** ${payload.reason}`,
             payload.deletedChannelId ? `**Last deleted channel ID:** \`${payload.deletedChannelId}\`` : null,
+            payload.deletedRoleId ? `**Last deleted role ID:** \`${payload.deletedRoleId}\`` : null,
             `**Alert channel:** ${alertPosted ? 'posted' : (alertChannelId ? 'failed/missing perms' : 'not configured')}`,
           ].filter(Boolean),
           thumbnail: executor?.displayAvatarURL?.({ size: 256 }) || undefined,

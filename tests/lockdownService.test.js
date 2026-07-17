@@ -5,6 +5,8 @@ import { PermissionFlagsBits } from 'discord.js';
 import {
   ANTI_NUKE_THRESHOLD,
   ANTI_NUKE_WINDOW_MS,
+  ANTI_NUKE_ROLE_THRESHOLD,
+  ANTI_NUKE_ROLE_WINDOW_MS,
   buildRestrictionMask,
   isTrustedExecutor,
   normalizeLockdownConfig,
@@ -30,6 +32,34 @@ test('recordDeletion expires deletions outside ten minute rolling window', () =>
   const state = new Map([['actor', [1, 2, 3]]]);
   const result = recordDeletion(state, 'actor', ANTI_NUKE_WINDOW_MS + 2);
 
+  assert.deepEqual(result, { count: 2, triggered: false });
+});
+
+test('role mass-delete triggers on fourth deletion inside one minute', () => {
+  const state = new Map();
+  const start = 5_000_000;
+
+  for (let index = 0; index < ANTI_NUKE_ROLE_THRESHOLD - 1; index += 1) {
+    const result = recordDeletion(state, 'actor', start + index, {
+      windowMs: ANTI_NUKE_ROLE_WINDOW_MS,
+      threshold: ANTI_NUKE_ROLE_THRESHOLD,
+    });
+    assert.equal(result.triggered, false);
+  }
+
+  const fourth = recordDeletion(state, 'actor', start + 3, {
+    windowMs: ANTI_NUKE_ROLE_WINDOW_MS,
+    threshold: ANTI_NUKE_ROLE_THRESHOLD,
+  });
+  assert.deepEqual(fourth, { count: 4, triggered: true });
+});
+
+test('role mass-delete window is one minute', () => {
+  const state = new Map([['actor', [1, 2, 3]]]);
+  const result = recordDeletion(state, 'actor', ANTI_NUKE_ROLE_WINDOW_MS + 2, {
+    windowMs: ANTI_NUKE_ROLE_WINDOW_MS,
+    threshold: ANTI_NUKE_ROLE_THRESHOLD,
+  });
   assert.deepEqual(result, { count: 2, triggered: false });
 });
 

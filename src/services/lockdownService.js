@@ -8,6 +8,10 @@ import { logger } from '../utils/logger.js';
 import { sendAntiNukeAlert } from './antiNukeAlert.js';
 import {
   DEFAULT_RESTRICTIONS,
+  ANTI_NUKE_WINDOW_MS,
+  ANTI_NUKE_THRESHOLD,
+  ANTI_NUKE_ROLE_WINDOW_MS,
+  ANTI_NUKE_ROLE_THRESHOLD,
   buildRestrictionMask,
   isTrustedExecutor,
   normalizeLockdownConfig,
@@ -19,7 +23,8 @@ import {
 export const MAX_LOCKDOWN_CHANNELS = 500;
 export const MAX_QUARANTINE_ROLES = 250;
 
-const deletionWindows = new Map();
+const channelDeletionWindows = new Map();
+const roleDeletionWindows = new Map();
 const guildOperations = new Map();
 
 function operationForGuild(guildId, operation) {
@@ -204,24 +209,98 @@ export async function quarantineMember(client, guild, member, lockdown, reason) 
   return { removedRoleIds: snapshot, bounded: removable.length === MAX_QUARANTINE_ROLES };
 }
 
-export async function handleChannelDeletion(client, channel, now = Date.now()) {
-  const guild = channel?.guild;
-  if (!guild) return { ignored: 'no_guild' };
+async function respondToAntiNukeTrigger(client, guild, {
+  member,
+  lockdown,
+  reason,
+  deletedChannelId = null,
+  deletedRoleId = null,
+  forceEnableAntiNuke = false,
+}) {
+  let activeLockdown = lockdown;
 
-  const lockdown = await getLockdownConfig(client, guild.id);
-  if (!lockdown.antiNukeEnabled) return { ignored: 'disabled' };
+  if (forceEnableAntiNuke && !lockdown.antiNukeEnabled) {
+    activeLockdown = await updateLockdownConfig(client, guild.id, current => ({
+      ...current,
+      antiNukeEnabled: true,
+    }));
+  }
 
+  let quarantine;
+  try {
+    quarantine = await quarantineMember(client, guild, member, activeLockdown, reason);
+  } catch (error) {
+    logger.error('Anti-nuke quarantine failed', {
+      guildId: guild.id,
+      executorId: member.id,
+      error: error.message,
+    });
+    quarantine = { error: error.message };
+  }
+
+  const lockdownResult = await engageLockdown(client, guild, activeLockdown.restrictions, reason)
+    .catch(error => {
+      logger.error('Anti-nuke lockdown failed', { guildId: guild.id, error: error.message });
+      return { success: false, failures: [error.message] };
+    });
+
+  const alert = await sendAntiNukeAlert(client, guild, activeLockdown, {
+    executor: member.user,
+    reason,
+    quarantine,
+    lockdownResult,
+    deletedChannelId,
+    deletedRoleId,
+  }).catch(error => {
+    logger.error('Anti-nuke alert failed', { guildId: guild.id, error: error.message });
+    return { alertPosted: false, error: error.message };
+  });
+
+  logger.warn('Anti-nuke threshold triggered', {
+    guildId: guild.id,
+    executorId: member.id,
+    reason,
+    quarantine,
+    lockdown: lockdownResult,
+    alert,
+    antiNukeForcedOn: forceEnableAntiNuke,
+  });
+
+  return {
+    triggered: true,
+    executorId: member.id,
+    quarantine,
+    lockdown: lockdownResult,
+    alert,
+    antiNukeEnabled: activeLockdown.antiNukeEnabled === true,
+  };
+}
+
+async function resolveAntiNukeExecutor(client, guild, lockdown, {
+  auditType,
+  targetId,
+  now,
+}) {
   let logs;
   try {
-    logs = await guild.fetchAuditLogs({ type: AuditLogEvent.ChannelDelete, limit: 6 });
+    logs = await guild.fetchAuditLogs({ type: auditType, limit: 6 });
   } catch (error) {
-    logger.error('Anti-nuke audit log fetch failed', { guildId: guild.id, channelId: channel.id, error: error.message });
+    logger.error('Anti-nuke audit log fetch failed', {
+      guildId: guild.id,
+      targetId,
+      auditType,
+      error: error.message,
+    });
     return { ignored: 'audit_fetch_failed' };
   }
 
-  const entry = selectUnambiguousAuditEntry(logs.entries.values(), channel.id, now);
+  const entry = selectUnambiguousAuditEntry(logs.entries.values(), targetId, now);
   if (!entry) {
-    logger.warn('Anti-nuke skipped ambiguous channel deletion attribution', { guildId: guild.id, channelId: channel.id });
+    logger.warn('Anti-nuke skipped ambiguous deletion attribution', {
+      guildId: guild.id,
+      targetId,
+      auditType,
+    });
     return { ignored: 'ambiguous_attribution' };
   }
 
@@ -229,7 +308,11 @@ export async function handleChannelDeletion(client, channel, now = Date.now()) {
   try {
     member = await guild.members.fetch(entry.executor.id);
   } catch (error) {
-    logger.warn('Anti-nuke could not resolve audit executor member', { guildId: guild.id, executorId: entry.executor.id, error: error.message });
+    logger.warn('Anti-nuke could not resolve audit executor member', {
+      guildId: guild.id,
+      executorId: entry.executor.id,
+      error: error.message,
+    });
     return { ignored: 'executor_unresolved' };
   }
 
@@ -243,43 +326,68 @@ export async function handleChannelDeletion(client, channel, now = Date.now()) {
   });
   if (trusted) return { ignored: 'trusted' };
 
-  const key = `${guild.id}:${entry.executor.id}`;
-  const counter = recordDeletion(deletionWindows, key, now);
+  return { member, entry };
+}
+
+export async function handleChannelDeletion(client, channel, now = Date.now()) {
+  const guild = channel?.guild;
+  if (!guild) return { ignored: 'no_guild' };
+
+  const lockdown = await getLockdownConfig(client, guild.id);
+  if (!lockdown.antiNukeEnabled) return { ignored: 'disabled' };
+
+  const resolved = await resolveAntiNukeExecutor(client, guild, lockdown, {
+    auditType: AuditLogEvent.ChannelDelete,
+    targetId: channel.id,
+    now,
+  });
+  if (resolved.ignored) return resolved;
+
+  const key = `channel:${guild.id}:${resolved.member.id}`;
+  const counter = recordDeletion(channelDeletionWindows, key, now, {
+    windowMs: ANTI_NUKE_WINDOW_MS,
+    threshold: ANTI_NUKE_THRESHOLD,
+  });
   if (!counter.triggered) return { ignored: 'below_threshold', count: counter.count };
 
-  deletionWindows.delete(key);
-  const reason = `Anti-nuke: ${counter.count} channel deletions within 10 minutes`;
-  let quarantine;
-  try {
-    quarantine = await quarantineMember(client, guild, member, lockdown, reason);
-  } catch (error) {
-    logger.error('Anti-nuke quarantine failed', { guildId: guild.id, executorId: entry.executor.id, error: error.message });
-    quarantine = { error: error.message };
-  }
-
-  const lockdownResult = await engageLockdown(client, guild, lockdown.restrictions, reason)
-    .catch(error => {
-      logger.error('Anti-nuke lockdown failed', { guildId: guild.id, error: error.message });
-      return { success: false, failures: [error.message] };
-    });
-
-  const alert = await sendAntiNukeAlert(client, guild, lockdown, {
-    executor: member.user,
-    reason,
-    quarantine,
-    lockdownResult,
+  channelDeletionWindows.delete(key);
+  return respondToAntiNukeTrigger(client, guild, {
+    member: resolved.member,
+    lockdown,
+    reason: `Anti-nuke: ${counter.count} channel deletions within 10 minutes`,
     deletedChannelId: channel.id,
-  }).catch(error => {
-    logger.error('Anti-nuke alert failed', { guildId: guild.id, error: error.message });
-    return { alertPosted: false, error: error.message };
   });
+}
 
-  logger.warn('Anti-nuke threshold triggered', {
-    guildId: guild.id,
-    executorId: entry.executor.id,
-    quarantine,
-    lockdown: lockdownResult,
-    alert,
+export async function handleRoleDeletion(client, role, now = Date.now()) {
+  const guild = role?.guild;
+  if (!guild) return { ignored: 'no_guild' };
+
+  let lockdown = await getLockdownConfig(client, guild.id);
+  // Role mass-delete always watches when a quarantine role is configured,
+  // and will force-enable anti-nuke on trigger for safety.
+  if (!lockdown.quarantineRoleId) return { ignored: 'no_quarantine_role' };
+
+  const resolved = await resolveAntiNukeExecutor(client, guild, lockdown, {
+    auditType: AuditLogEvent.RoleDelete,
+    targetId: role.id,
+    now,
   });
-  return { triggered: true, executorId: entry.executor.id, quarantine, lockdown: lockdownResult, alert };
+  if (resolved.ignored) return resolved;
+
+  const key = `role:${guild.id}:${resolved.member.id}`;
+  const counter = recordDeletion(roleDeletionWindows, key, now, {
+    windowMs: ANTI_NUKE_ROLE_WINDOW_MS,
+    threshold: ANTI_NUKE_ROLE_THRESHOLD,
+  });
+  if (!counter.triggered) return { ignored: 'below_threshold', count: counter.count };
+
+  roleDeletionWindows.delete(key);
+  return respondToAntiNukeTrigger(client, guild, {
+    member: resolved.member,
+    lockdown,
+    reason: `Anti-nuke: ${counter.count} role deletions within 1 minute`,
+    deletedRoleId: role.id,
+    forceEnableAntiNuke: true,
+  });
 }
