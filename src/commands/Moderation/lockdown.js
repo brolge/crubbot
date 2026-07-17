@@ -13,6 +13,7 @@ import {
   liftLockdown,
   updateLockdownConfig,
 } from '../../services/lockdownService.js';
+import { runLockdownDashboard } from './modules/lockdown_dashboard.js';
 
 const actionOption = option => option
   .setName('action')
@@ -52,6 +53,9 @@ export default {
     .setName('lockdown')
     .setDescription('Configure anti-nuke quarantine and server lockdown')
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+    .addSubcommand(subcommand => subcommand
+      .setName('dashboard')
+      .setDescription('Open the interactive lockdown & anti-nuke dashboard'))
     .addSubcommand(subcommand => subcommand
       .setName('status')
       .setDescription('Show lockdown and anti-nuke configuration'))
@@ -109,6 +113,11 @@ export default {
       }
 
       const subcommand = interaction.options.getSubcommand();
+      if (subcommand === 'dashboard') {
+        await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
+        return runLockdownDashboard(interaction, client);
+      }
+
       if (subcommand === 'status') {
         const lockdown = await getLockdownConfig(client, interaction.guildId);
         return InteractionHelper.universalReply(interaction, {
