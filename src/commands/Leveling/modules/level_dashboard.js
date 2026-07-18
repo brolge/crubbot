@@ -51,9 +51,9 @@ function buildDashboardEmbed(cfg, guild) {
             { name: 'Level-up Channel', value: channel, inline: true },
             { name: 'System Status', value: cfg.enabled ? '**Enabled**' : '**Disabled**', inline: true },
             { name: 'Announcements', value: cfg.announceLevelUp !== false ? '**Enabled**' : '**Disabled**', inline: true },
+            { name: 'Clapbacks', value: cfg.clapbacksEnabled !== false ? '**Enabled**' : '**Disabled**', inline: true },
             { name: 'XP per Message', value: `\`${xpMin} – ${xpMax}\``, inline: true },
             { name: 'XP Cooldown', value: `\`${cooldown}s\``, inline: true },
-            { name: '\u200B', value: '\u200B', inline: true },
             { name: 'Level-up Message', value: msgPreview, inline: false },
             { name: 'Role Rewards', value: rewardsValue, inline: false },
             { name: 'Ignored Channels', value: ignoredChValue, inline: true },
@@ -114,6 +114,7 @@ function buildSelectMenu(guildId) {
 function buildButtonRow(cfg, guildId, disabled = false) {
     const announceOn = cfg.announceLevelUp !== false;
     const systemOn = cfg.enabled !== false;
+    const clapbacksOn = cfg.clapbacksEnabled !== false;
     return new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`level_cfg_toggle_announce_${guildId}`)
@@ -126,6 +127,12 @@ function buildButtonRow(cfg, guildId, disabled = false) {
             .setLabel('Leveling')
             .setStyle(systemOn ? ButtonStyle.Success : ButtonStyle.Danger)
             .setEmoji('⚡')
+            .setDisabled(disabled),
+        new ButtonBuilder()
+            .setCustomId(`level_cfg_toggle_clapbacks_${guildId}`)
+            .setLabel('Clapbacks')
+            .setStyle(clapbacksOn ? ButtonStyle.Success : ButtonStyle.Danger)
+            .setEmoji('💢')
             .setDisabled(disabled),
     );
 }
@@ -166,7 +173,8 @@ export default {
                 selectMenuId: `level_cfg_${guildId}`,
                 buttonMatcher: (customId) =>
                     customId === `level_cfg_toggle_announce_${guildId}` ||
-                    customId === `level_cfg_toggle_system_${guildId}`,
+                    customId === `level_cfg_toggle_system_${guildId}` ||
+                    customId === `level_cfg_toggle_clapbacks_${guildId}`,
                 onSelect: async (selectInteraction) => {
                     const selectedOption = selectInteraction.values[0];
                     switch (selectedOption) {
@@ -199,6 +207,7 @@ export default {
                 onButton: async (btnInteraction) => {
                     await btnInteraction.deferUpdate().catch(() => null);
                     const isAnnounce = btnInteraction.customId === `level_cfg_toggle_announce_${guildId}`;
+                    const isClapbacks = btnInteraction.customId === `level_cfg_toggle_clapbacks_${guildId}`;
 
                     if (isAnnounce) {
                         cfg.announceLevelUp = cfg.announceLevelUp === false;
@@ -208,6 +217,18 @@ export default {
                                 successEmbed(
                                     '✅ Announcements Updated',
                                     `Level-up announcements are now **${cfg.announceLevelUp ? 'enabled' : 'disabled'}**.`,
+                                ),
+                            ],
+                            flags: MessageFlags.Ephemeral,
+                        });
+                    } else if (isClapbacks) {
+                        cfg.clapbacksEnabled = cfg.clapbacksEnabled === false;
+                        await saveLevelingConfig(client, guildId, cfg);
+                        await btnInteraction.followUp({
+                            embeds: [
+                                successEmbed(
+                                    'Clapbacks Updated',
+                                    `Level-up clapbacks are now **${cfg.clapbacksEnabled ? 'enabled' : 'disabled'}**.`,
                                 ),
                             ],
                             flags: MessageFlags.Ephemeral,

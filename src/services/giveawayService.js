@@ -249,6 +249,33 @@ export function selectWinners(participants, winnerCount) {
     }
 }
 
+export function selectWinnersWithDisclosedChoice(participants, winnerCount, selectedParticipant) {
+    const uniqueParticipants = [...new Set(participants || [])];
+    if (!uniqueParticipants.includes(selectedParticipant)) {
+        throw new CrubError(
+            'Selected giveaway winner is not an entrant',
+            ErrorTypes.VALIDATION,
+            'The selected winner must have entered the giveaway.',
+        );
+    }
+    const normalizedCount = Number.isInteger(winnerCount) ? winnerCount : 1;
+    if (normalizedCount < 1 || uniqueParticipants.length < normalizedCount) {
+        throw new CrubError(
+            'Invalid disclosed winner selection count',
+            ErrorTypes.VALIDATION,
+            'There are not enough entries to fill all winner slots.',
+        );
+    }
+    const remainingCount = normalizedCount - 1;
+    const randomWinners = remainingCount > 0
+        ? selectWinners(
+            uniqueParticipants.filter(id => id !== selectedParticipant),
+            remainingCount,
+        )
+        : [];
+    return [selectedParticipant, ...randomWinners];
+}
+
 export function isUserRateLimited(userId, giveawayId) {
     const status = getRateLimitStatus(
         getGiveawayInteractionKey(userId, giveawayId),

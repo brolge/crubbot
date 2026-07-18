@@ -5,6 +5,7 @@ import { getLevelingConfig, getXpForLevel, getUserLevelData, saveUserLevelData }
 import { logEvent, EVENT_TYPES } from './loggingService.js';
 import { formatLogLine } from '../utils/logEmbeds.js';
 import { Mutex } from '../utils/mutex.js';
+import { registerLevelUpAnnouncement } from './levelClapbackService.js';
 
 export async function addXp(client, guild, member, xpToAdd) {
   const lockKey = `leveling:${guild.id}:${member.user.id}`;
@@ -131,9 +132,11 @@ async function sendLevelUpAnnouncement(guild, member, levelData, config) {
       .replace(/{xp}/g, levelData.xp)
       .replace(/{xpNeeded}/g, getXpForLevel(levelData.level + 1));
     
-    await levelUpChannel.send(message).catch(error => {
+    const announcement = await levelUpChannel.send(message).catch(error => {
       logger.error(`Failed to send level up message in channel ${levelUpChannel.id}:`, error);
+      return null;
     });
+    if (announcement) registerLevelUpAnnouncement(announcement);
   } catch (error) {
     logger.error('Error sending level up announcement:', error);
   }

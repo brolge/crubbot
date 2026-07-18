@@ -1,6 +1,7 @@
 import { Events, ChannelType } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from '../utils/logger.js';
+import { handleChannelCreateDuringLockdown } from '../services/lockdownService.js';
 
 function channelLabel(channel) {
   if (!channel) return 'Unknown';
@@ -14,6 +15,16 @@ export default {
   async execute(channel) {
     try {
       if (!channel.guild) return;
+      try {
+        await handleChannelCreateDuringLockdown(channel.client, channel);
+      } catch (error) {
+        logger.error('Lockdown new-channel guard failed:', {
+          guildId: channel.guild.id,
+          channelId: channel.id,
+          error: error.message,
+        });
+      }
+
       await logEvent({
         client: channel.client,
         guildId: channel.guild.id,

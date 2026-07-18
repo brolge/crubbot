@@ -2,6 +2,7 @@ import {
   AuditLogEvent,
   ChannelType,
   OverwriteType,
+  PermissionFlagsBits,
 } from 'discord.js';
 import { getGuildConfig, setGuildConfig } from './guildConfig.js';
 import { logger } from '../utils/logger.js';
@@ -194,13 +195,20 @@ export async function quarantineMember(client, guild, member, lockdown, reason) 
   const removable = [...member.roles.cache.values()]
     .filter(role => role.id !== guild.id && role.id !== quarantineRole.id && role.editable && !role.managed)
     .slice(0, MAX_QUARANTINE_ROLES);
-  const snapshot = removable.map(role => role.id);
+  const existing = lockdown.quarantinedMembers?.[member.id];
+  const snapshot = existing?.roleIds?.length
+    ? existing.roleIds
+    : removable.map(role => role.id);
 
   await updateLockdownConfig(client, guild.id, current => ({
     ...current,
     quarantinedMembers: {
       ...current.quarantinedMembers,
-      [member.id]: { roleIds: snapshot, quarantinedAt: new Date().toISOString(), reason },
+      [member.id]: existing || {
+        roleIds: snapshot,
+        quarantinedAt: new Date().toISOString(),
+        reason,
+      },
     },
   }));
 
@@ -224,7 +232,16 @@ export async function unquarantineMember(client, guild, userId, reason = 'Quaran
     await updateLockdownConfig(client, guild.id, (current) => {
       const quarantinedMembers = { ...current.quarantinedMembers };
       delete quarantinedMembers[userId];
-      return { ...current, quarantinedMembers };
+      const memberIds = current.bulkQuarantine.memberIds.filter((id) => id !== userId);
+      return {
+        ...current,
+        quarantinedMembers,
+        bulkQuarantine: {
+          ...current.bulkQuarantine,
+          active: memberIds.length > 0,
+          memberIds,
+        },
+      };
     });
     return {
       success: true,
@@ -272,11 +289,22 @@ export async function unquarantineMember(client, guild, userId, reason = 'Quaran
     }
   }
 
-  await updateLockdownConfig(client, guild.id, (current) => {
-    const quarantinedMembers = { ...current.quarantinedMembers };
-    delete quarantinedMembers[userId];
-    return { ...current, quarantinedMembers };
-  });
+  if (failures.length === 0) {
+    await updateLockdownConfig(client, guild.id, (current) => {
+      const quarantinedMembers = { ...current.quarantinedMembers };
+      delete quarantinedMembers[userId];
+      const memberIds = current.bulkQuarantine.memberIds.filter((id) => id !== userId);
+      return {
+        ...current,
+        quarantinedMembers,
+        bulkQuarantine: {
+          ...current.bulkQuarantine,
+          active: memberIds.length > 0,
+          memberIds,
+        },
+      };
+    });
+  }
 
   return {
     success: failures.length === 0,
@@ -286,6 +314,279 @@ export async function unquarantineMember(client, guild, userId, reason = 'Quaran
     record,
     member,
   };
+}
+
+function isBulkQuarantineExempt(client, guild, member, lockdown) {
+  if (!member || member.user.bot) return true;
+  if (member.id === guild.ownerId || member.id === client.user?.id) return true;
+  if (lockdown.trustedUserIds.includes(member.id)) return true;
+  if ([...member.roles.cache.keys()].some((id) => lockdown.trustedRoleIds.includes(id))) return true;
+  if ([...member.roles.cache.values()].some(
+    (role) => role.id !== guild.id && !role.managed && !role.editable,
+  )) return true;
+  return member.permissions.has(PermissionFlagsBits.Administrator)
+    || member.permissions.has(PermissionFlagsBits.ManageGuild)
+    || member.permissions.has(PermissionFlagsBits.ManageRoles);
+}
+
+export async function quarantineAllMembers(
+  client,
+  guild,
+  reason = 'Emergency member quarantine',
+) {
+  const lockdown = await getLockdownConfig(client, guild.id);
+  const quarantineRole = lockdown.quarantineRoleId
+    ? guild.roles.cache.get(lockdown.quarantineRoleId)
+    : null;
+  if (!quarantineRole?.editable) {
+    throw new Error('Configure an assignable quarantine role before quarantining members.');
+  }
+  if (lockdown.bulkQuarantine.active) {
+    return {
+      success: false,
+      alreadyActive: true,
+      attempted: 0,
+      quarantined: 0,
+      exempt: 0,
+      failures: [],
+    };
+  }
+
+  const members = await guild.members.fetch();
+  const targets = [...members.values()].filter(
+    (member) =>
+      !lockdown.quarantinedMembers[member.id]
+      && !isBulkQuarantineExempt(client, guild, member, lockdown),
+  );
+  const exempt = members.size - targets.length;
+  const newRecords = {};
+  const now = new Date().toISOString();
+
+  for (const member of targets) {
+    const roleIds = [...member.roles.cache.values()]
+      .filter((role) =>
+        role.id !== guild.id
+        && role.id !== quarantineRole.id
+        && role.editable
+        && !role.managed)
+      .slice(0, MAX_QUARANTINE_ROLES)
+      .map((role) => role.id);
+    newRecords[member.id] = {
+      roleIds,
+      quarantinedAt: now,
+      reason,
+    };
+  }
+
+  let acceptedIds = [];
+  await updateLockdownConfig(client, guild.id, (current) => {
+    acceptedIds = targets
+      .map((member) => member.id)
+      .filter((memberId) => !current.quarantinedMembers[memberId]);
+    const acceptedRecords = Object.fromEntries(
+      acceptedIds.map((memberId) => [memberId, newRecords[memberId]]),
+    );
+    return {
+      ...current,
+      quarantinedMembers: {
+        ...current.quarantinedMembers,
+        ...acceptedRecords,
+      },
+      bulkQuarantine: {
+        active: acceptedIds.length > 0,
+        createdAt: now,
+        memberIds: acceptedIds,
+      },
+    };
+  });
+
+  const failures = [];
+  let quarantined = 0;
+  const acceptedSet = new Set(acceptedIds);
+  const acceptedTargets = targets.filter((member) => acceptedSet.has(member.id));
+  for (const member of acceptedTargets) {
+    const record = newRecords[member.id];
+    try {
+      const removable = (record.roleIds || [])
+        .map((id) => guild.roles.cache.get(id))
+        .filter(Boolean);
+      if (removable.length) await member.roles.remove(removable, reason);
+      if (!member.roles.cache.has(quarantineRole.id)) {
+        await member.roles.add(quarantineRole, reason);
+      }
+      quarantined += 1;
+    } catch (error) {
+      failures.push(`${member.user.tag} (${member.id}): ${error.message}`);
+    }
+  }
+
+  return {
+    success: failures.length === 0,
+    attempted: acceptedTargets.length,
+    quarantined,
+    exempt: exempt + (targets.length - acceptedTargets.length),
+    failures,
+  };
+}
+
+export async function restoreAllQuarantinedMembers(
+  client,
+  guild,
+  reason = 'Emergency member quarantine lifted',
+) {
+  const lockdown = await getLockdownConfig(client, guild.id);
+  const userIds = [...new Set(lockdown.bulkQuarantine.memberIds)];
+  if (!userIds.length) {
+    return {
+      success: false,
+      notActive: true,
+      attempted: 0,
+      restored: 0,
+      leftServer: 0,
+      failures: [],
+    };
+  }
+
+  const failures = [];
+  const clearedIds = new Set();
+  let restored = 0;
+  let leftServer = 0;
+  for (const userId of userIds) {
+    const record = lockdown.quarantinedMembers[userId];
+    if (!record) {
+      clearedIds.add(userId);
+      restored += 1;
+      continue;
+    }
+
+    const member = await guild.members.fetch(userId).catch(() => null);
+    if (!member) {
+      clearedIds.add(userId);
+      leftServer += 1;
+      continue;
+    }
+
+    const assignableRoles = (record.roleIds || [])
+      .map((roleId) => guild.roles.cache.get(roleId))
+      .filter((role) => role?.editable && !role.managed);
+    try {
+      if (assignableRoles.length) await member.roles.add(assignableRoles, reason);
+      const quarantineRole = lockdown.quarantineRoleId
+        ? guild.roles.cache.get(lockdown.quarantineRoleId)
+        : null;
+      if (quarantineRole?.editable && member.roles.cache.has(quarantineRole.id)) {
+        await member.roles.remove(quarantineRole, reason);
+      }
+      clearedIds.add(userId);
+      restored += 1;
+    } catch (error) {
+      failures.push(`${member.user.tag} (${userId}): ${error.message}`);
+    }
+  }
+
+  await updateLockdownConfig(client, guild.id, (current) => ({
+    ...current,
+    quarantinedMembers: Object.fromEntries(
+      Object.entries(current.quarantinedMembers)
+        .filter(([userId]) => !clearedIds.has(userId)),
+    ),
+    bulkQuarantine: (() => {
+      const memberIds = current.bulkQuarantine.memberIds
+        .filter((userId) => !clearedIds.has(userId));
+      return {
+        active: memberIds.length > 0,
+        createdAt: memberIds.length ? current.bulkQuarantine.createdAt : null,
+        memberIds,
+      };
+    })(),
+  }));
+
+  return {
+    success: failures.length === 0,
+    attempted: userIds.length,
+    restored,
+    leftServer,
+    failures,
+  };
+}
+
+export async function handleMemberJoinDuringLockdown(client, member) {
+  if (!member?.guild || !member.user?.bot) return { ignored: 'not_bot' };
+  const lockdown = await getLockdownConfig(client, member.guild.id);
+  if (!lockdown.active || !lockdown.guards.blockNewBots) {
+    return { ignored: 'guard_disabled' };
+  }
+  if (lockdown.trustedUserIds.includes(member.id)) return { ignored: 'trusted' };
+  if (!member.kickable) {
+    logger.warn('Lockdown could not block new bot due to role hierarchy', {
+      guildId: member.guild.id,
+      botId: member.id,
+    });
+    return { ignored: 'not_kickable' };
+  }
+
+  await member.kick('Lockdown guard: new bot joins are blocked');
+  logger.warn('Lockdown blocked a new bot join', {
+    guildId: member.guild.id,
+    botId: member.id,
+    botTag: member.user.tag,
+  });
+  return { blocked: true, botId: member.id };
+}
+
+export async function handleChannelCreateDuringLockdown(client, channel) {
+  const guild = channel?.guild;
+  if (
+    !guild
+    || !channel.permissionOverwrites?.cache
+    || typeof channel.permissionOverwrites.set !== 'function'
+  ) {
+    return { ignored: 'unsupported_channel' };
+  }
+
+  const lockdown = await getLockdownConfig(client, guild.id);
+  if (!lockdown.active || !lockdown.snapshot || !lockdown.guards.lockNewChannels) {
+    return { ignored: 'guard_disabled' };
+  }
+  if (lockdown.snapshot.channels.some((item) => item.channelId === channel.id)) {
+    return { ignored: 'already_snapshotted' };
+  }
+  if (lockdown.snapshot.channels.length >= MAX_LOCKDOWN_CHANNELS) {
+    logger.warn('Lockdown new-channel guard skipped snapshot limit', {
+      guildId: guild.id,
+      channelId: channel.id,
+    });
+    return { ignored: 'snapshot_limit' };
+  }
+
+  const original = snapshotEveryoneOverwrite(channel, guild.roles.everyone.id);
+  let snapshotSaved = false;
+  await updateLockdownConfig(client, guild.id, (current) => {
+    if (
+      !current.active
+      || !current.snapshot
+      || current.snapshot.channels.length >= MAX_LOCKDOWN_CHANNELS
+      || current.snapshot.channels.some((item) => item.channelId === channel.id)
+    ) {
+      return current;
+    }
+    snapshotSaved = true;
+    return {
+      ...current,
+      snapshot: {
+        ...current.snapshot,
+        channels: [...current.snapshot.channels, original],
+      },
+    };
+  });
+  if (!snapshotSaved) return { ignored: 'lockdown_changed' };
+  await replaceEveryoneOverwrite(
+    channel,
+    guild.roles.everyone.id,
+    restrictOverwriteState(original, lockdown.restrictions),
+    'Lockdown guard: restrict newly created channel',
+  );
+  return { locked: true, channelId: channel.id };
 }
 
 async function respondToAntiNukeTrigger(client, guild, {

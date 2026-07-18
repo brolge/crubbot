@@ -41,6 +41,19 @@ export function normalizeLockdownConfig(raw = {}) {
       value.quarantinedMembers && typeof value.quarantinedMembers === 'object'
         ? value.quarantinedMembers
         : {},
+    bulkQuarantine: {
+      active: value.bulkQuarantine?.active === true,
+      createdAt: typeof value.bulkQuarantine?.createdAt === 'string'
+        ? value.bulkQuarantine.createdAt
+        : null,
+      memberIds: [...new Set(
+        Array.isArray(value.bulkQuarantine?.memberIds) ? value.bulkQuarantine.memberIds : [],
+      )].slice(0, 10_000),
+    },
+    guards: {
+      blockNewBots: value.guards?.blockNewBots === true,
+      lockNewChannels: value.guards?.lockNewChannels !== false,
+    },
   };
 }
 

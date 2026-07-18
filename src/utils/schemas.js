@@ -118,6 +118,15 @@ const LockdownConfigSchema = z
       quarantinedAt: z.string(),
       reason: z.string(),
     })).default({}),
+    bulkQuarantine: z.object({
+      active: z.boolean().default(false),
+      createdAt: z.string().nullable().default(null),
+      memberIds: z.array(z.string()).max(10000).default([]),
+    }).default({}),
+    guards: z.object({
+      blockNewBots: z.boolean().default(false),
+      lockNewChannels: z.boolean().default(true),
+    }).default({}),
   })
   .default({});
 

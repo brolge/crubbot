@@ -43,6 +43,15 @@ const GUILD_CONFIG_DEFAULTS = {
         active: false,
         snapshot: null,
         quarantinedMembers: {},
+        bulkQuarantine: {
+            active: false,
+            createdAt: null,
+            memberIds: [],
+        },
+        guards: {
+            blockNewBots: false,
+            lockNewChannels: true,
+        },
     },
 };
 

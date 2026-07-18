@@ -17,6 +17,7 @@ import {
   isValidCountingMessage,
   recordCorrectCount,
 } from '../services/countingGameService.js';
+import { handleLevelClapback } from '../services/levelClapbackService.js';
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
@@ -33,6 +34,10 @@ export default {
       if (countingProcessed) {
         return;
       }
+
+      await handleLevelClapback(message, client).catch((error) => {
+        logger.debug('Level-up clapback handler failed:', error.message);
+      });
 
       await handlePrefixCommand(message, client);
 

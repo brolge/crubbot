@@ -83,7 +83,7 @@ function buildApplicationModal({ roleId, roleName, questions, page, draftId }) {
   return modal;
 }
 
-function buildWizardControls(draft, page) {
+function buildWizardControls(draft, page, ephemeral = true) {
   const pageCount = getQuestionPageCount(draft.questions);
   const answered = draft.answers.filter((entry) => entry?.answer).length;
   const embed = createEmbed({
@@ -111,11 +111,18 @@ function buildWizardControls(draft, page) {
       .setStyle(ButtonStyle.Secondary),
   );
 
-  return { embeds: [embed], components: page + 1 < pageCount ? [row] : [], flags: MessageFlags.Ephemeral };
+  return {
+    embeds: [embed],
+    components: page + 1 < pageCount ? [row] : [],
+    ...(ephemeral ? { flags: MessageFlags.Ephemeral } : {}),
+  };
 }
 
 async function finalizeApplicationSubmission(interaction, draft) {
-  const role = interaction.guild.roles.cache.get(draft.roleId);
+  const guild = interaction.client.guilds.cache.get(draft.guildId)
+    || await interaction.client.guilds.fetch(draft.guildId).catch(() => null);
+  const role = guild?.roles.cache.get(draft.roleId)
+    || await guild?.roles.fetch(draft.roleId).catch(() => null);
   if (!role) {
     deleteApplicationDraft(draft.draftId);
     throw createError(
@@ -125,9 +132,19 @@ async function finalizeApplicationSubmission(interaction, draft) {
       { roleId: draft.roleId },
     );
   }
+  const member = await guild.members.fetch(interaction.user.id).catch(() => null);
+  if (!member) {
+    deleteApplicationDraft(draft.draftId);
+    throw createError(
+      'Applicant is no longer in the server',
+      ErrorTypes.PERMISSION,
+      `You must still be a member of **${guild.name}** to submit this application.`,
+      { guildId: guild.id, userId: interaction.user.id },
+    );
+  }
 
   const application = await ApplicationService.submitApplication(interaction.client, {
-    guildId: interaction.guild.id,
+    guildId: draft.guildId,
     userId: interaction.user.id,
     roleId: draft.roleId,
     roleName: draft.roleName,
@@ -142,24 +159,23 @@ async function finalizeApplicationSubmission(interaction, draft) {
     'Application Submitted',
     `Your application for **${draft.roleName}** has been submitted successfully!\n\n` +
     `Application ID: \`${application.id}\`\n` +
-    `You can check the status with \`/apply status id:${application.id}\``,
+    `You can check the status in **${guild.name}** with \`/apply status id:${application.id}\``,
   );
 
   await InteractionHelper.safeEditReply(interaction, {
     embeds: [embed],
     components: [],
-    flags: MessageFlags.Ephemeral,
   });
 
-  const settings = await getApplicationSettings(interaction.client, interaction.guild.id);
-  const roleSettings = await getApplicationRoleSettings(interaction.client, interaction.guild.id, draft.roleId);
-  const guildConfig = await getGuildConfig(interaction.client, interaction.guild.id);
+  const settings = await getApplicationSettings(interaction.client, draft.guildId);
+  const roleSettings = await getApplicationRoleSettings(interaction.client, draft.guildId, draft.roleId);
+  const guildConfig = await getGuildConfig(interaction.client, draft.guildId);
   const logChannelId = resolveApplicationLogChannel(guildConfig, roleSettings, settings);
 
   if (logChannelId) {
     const logMessage = await logEvent({
       client: interaction.client,
-      guildId: interaction.guild.id,
+      guildId: draft.guildId,
       eventType: EVENT_TYPES.APPLICATION_SUBMIT,
       channelId: logChannelId,
       data: {
@@ -179,7 +195,7 @@ async function finalizeApplicationSubmission(interaction, draft) {
     });
 
     if (logMessage) {
-      await updateApplication(interaction.client, interaction.guild.id, application.id, {
+      await updateApplication(interaction.client, draft.guildId, application.id, {
         logMessageId: logMessage.id,
         logChannelId,
       });
@@ -202,6 +218,16 @@ export default {
             .setDescription('The application you want to submit')
             .setRequired(true)
             .setAutocomplete(true),
+        )
+        .addStringOption((option) =>
+          option
+            .setName('delivery')
+            .setDescription('Where to complete the form (defaults to DMs)')
+            .setRequired(false)
+            .addChoices(
+              { name: 'Direct Messages (recommended)', value: 'dm' },
+              { name: 'Here (ephemeral)', value: 'here' },
+            ),
         ),
     )
     .addSubcommand((subcommand) =>
@@ -282,7 +308,11 @@ export async function handleApplicationModal(interaction) {
   try {
     if (draftId) {
       const draft = getApplicationDraft(draftId);
-      if (!draft || draft.userId !== interaction.user.id || draft.guildId !== interaction.guild.id) {
+      if (
+        !draft
+        || draft.userId !== interaction.user.id
+        || (interaction.guildId && draft.guildId !== interaction.guildId)
+      ) {
         return await replyUserError(interaction, {
           type: ErrorTypes.VALIDATION,
           message: 'This application session expired. Run `/apply submit` again.',
@@ -300,7 +330,10 @@ export async function handleApplicationModal(interaction) {
 
       const pageCount = getQuestionPageCount(draft.questions);
       if (page + 1 < pageCount) {
-        await InteractionHelper.safeReply(interaction, buildWizardControls(draft, page));
+        await InteractionHelper.safeReply(
+          interaction,
+          buildWizardControls(draft, page, interaction.inGuild()),
+        );
         return;
       }
 
@@ -311,7 +344,10 @@ export async function handleApplicationModal(interaction) {
         });
       }
 
-      await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
+      await InteractionHelper.safeDefer(
+        interaction,
+        interaction.inGuild() ? { flags: MessageFlags.Ephemeral } : {},
+      );
       await finalizeApplicationSubmission(interaction, draft);
       return;
     }
@@ -336,7 +372,7 @@ export async function handleApplicationModal(interaction) {
 
     const draft = {
       draftId: 'legacy',
-      guildId: interaction.guild.id,
+      guildId: interaction.guildId,
       userId: interaction.user.id,
       roleId,
       roleName: applicationRole.name,
@@ -350,7 +386,7 @@ export async function handleApplicationModal(interaction) {
     logger.error('Error creating application:', {
       error: error.message,
       userId: interaction.user.id,
-      guildId: interaction.guild.id,
+      guildId: interaction.guildId || 'dm',
       roleId,
       stack: error.stack,
     });
@@ -370,8 +406,13 @@ export async function handleApplicationWizardButton(interaction) {
     ? 'next'
     : interaction.customId.startsWith('app_wiz_cancel_')
       ? 'cancel'
+      : interaction.customId.startsWith('app_wiz_start_')
+        ? 'start'
       : null;
-  const id = interaction.customId.replace('app_wiz_next_', '').replace('app_wiz_cancel_', '');
+  const id = interaction.customId
+    .replace('app_wiz_next_', '')
+    .replace('app_wiz_cancel_', '')
+    .replace('app_wiz_start_', '');
 
   if (!realAction || !id) {
     await replyUserError(interaction, {
@@ -382,7 +423,11 @@ export async function handleApplicationWizardButton(interaction) {
   }
 
   const draft = getApplicationDraft(id);
-  if (!draft || draft.userId !== interaction.user.id || draft.guildId !== interaction.guild.id) {
+  if (
+    !draft
+    || draft.userId !== interaction.user.id
+    || (interaction.guildId && draft.guildId !== interaction.guildId)
+  ) {
     await replyUserError(interaction, {
       type: ErrorTypes.VALIDATION,
       message: 'This application session expired. Run `/apply submit` again.',
@@ -396,6 +441,19 @@ export async function handleApplicationWizardButton(interaction) {
       embeds: [successEmbed('Application Cancelled', 'Your in-progress application was discarded.')],
       components: [],
     });
+    return true;
+  }
+
+  if (realAction === 'start') {
+    draft.page = 0;
+    saveApplicationDraft(draft);
+    await interaction.showModal(buildApplicationModal({
+      roleId: draft.roleId,
+      roleName: draft.roleName,
+      questions: draft.questions,
+      page: 0,
+      draftId: draft.draftId,
+    }));
     return true;
   }
 
@@ -518,6 +576,61 @@ async function handleSubmit(interaction, settings) {
     roleName: applicationRole.name,
     questions,
   });
+
+  const delivery = interaction.options.getString('delivery') || 'dm';
+  if (delivery === 'dm') {
+    const dm = await interaction.user.createDM().catch(() => null);
+    if (!dm) {
+      deleteApplicationDraft(draft.draftId);
+      return await replyUserError(interaction, {
+        type: ErrorTypes.PERMISSION,
+        message: 'I could not open your DMs. Enable direct messages for this server, then try again.',
+      });
+    }
+
+    const startRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`app_wiz_start_${draft.draftId}`)
+        .setLabel('Start Application')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`app_wiz_cancel_${draft.draftId}`)
+        .setLabel('Cancel')
+        .setStyle(ButtonStyle.Secondary),
+    );
+    const dmMessage = await dm.send({
+      embeds: [createEmbed({
+        title: `Application — ${applicationRole.name}`,
+        description: [
+          `**Server:** ${interaction.guild.name}`,
+          `**Questions:** ${questions.length}`,
+          `**Pages:** ${getQuestionPageCount(questions)}`,
+          '',
+          'Your answers stay private and are submitted back to the server for staff review.',
+          'This session expires after 30 minutes of inactivity.',
+        ].join('\n'),
+        color: getColor('info'),
+      })],
+      components: [startRow],
+    }).catch(() => null);
+
+    if (!dmMessage) {
+      deleteApplicationDraft(draft.draftId);
+      return await replyUserError(interaction, {
+        type: ErrorTypes.PERMISSION,
+        message: 'I could not message you. Enable DMs from server members, then try again.',
+      });
+    }
+
+    await interaction.reply({
+      embeds: [successEmbed(
+        'Application Sent to Your DMs',
+        `Open your DMs with me and click **Start Application** for **${applicationRole.name}**.`,
+      )],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
 
   await interaction.showModal(buildApplicationModal({
     roleId: applicationRole.roleId,

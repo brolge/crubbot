@@ -142,4 +142,32 @@ test('normalizeLockdownConfig supplies safe defaults and deduplicates trust list
   assert.equal(config.restrictions.messaging, true);
   assert.equal(config.restrictions.reactions, false);
   assert.equal(config.active, false);
+  assert.deepEqual(config.bulkQuarantine, {
+    active: false,
+    createdAt: null,
+    memberIds: [],
+  });
+  assert.deepEqual(config.guards, {
+    blockNewBots: false,
+    lockNewChannels: true,
+  });
+});
+
+test('normalizeLockdownConfig preserves bulk quarantine and guard controls', () => {
+  const config = normalizeLockdownConfig({
+    bulkQuarantine: {
+      active: true,
+      createdAt: '2026-07-18T00:00:00.000Z',
+      memberIds: ['one', 'one', 'two'],
+    },
+    guards: {
+      blockNewBots: true,
+      lockNewChannels: false,
+    },
+  });
+
+  assert.deepEqual(config.bulkQuarantine.memberIds, ['one', 'two']);
+  assert.equal(config.bulkQuarantine.active, true);
+  assert.equal(config.guards.blockNewBots, true);
+  assert.equal(config.guards.lockNewChannels, false);
 });

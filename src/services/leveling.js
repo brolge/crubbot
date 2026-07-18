@@ -4,7 +4,6 @@ import { EmbedBuilder } from 'discord.js';
 import { logger } from '../utils/logger.js';
 import { getGuildConfig, setGuildConfig } from '../services/guildConfig.js';
 import { CrubError, ErrorTypes } from '../utils/errorHandler.js';
-import { addXp } from './xpSystem.js';
 
 const BASE_XP = 100;
 const XP_MULTIPLIER = 1.5;
@@ -160,6 +159,7 @@ export async function getLevelingConfig(client, guildId) {
       blacklistedUsers: [],
       roleRewards: {},
       announceLevelUp: true,
+      clapbacksEnabled: true,
       xpMultiplier: 1
     };
   } catch (error) {
@@ -175,6 +175,7 @@ export async function getLevelingConfig(client, guildId) {
       blacklistedUsers: [],
       roleRewards: {},
       announceLevelUp: true,
+      clapbacksEnabled: true,
       xpMultiplier: 1
     };
   }

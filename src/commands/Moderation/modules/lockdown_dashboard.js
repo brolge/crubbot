@@ -20,6 +20,8 @@ import {
   engageLockdown,
   getLockdownConfig,
   liftLockdown,
+  quarantineAllMembers,
+  restoreAllQuarantinedMembers,
   updateLockdownConfig,
 } from '../../../services/lockdownService.js';
 
@@ -92,6 +94,21 @@ function buildStatusEmbed(config) {
         value: restrictions,
         inline: false,
       },
+      {
+        name: 'Member Quarantine',
+        value: config.bulkQuarantine.active
+          ? `🔴 **Active** — ${config.bulkQuarantine.memberIds.length} saved member(s)`
+          : `🟢 Inactive — ${Object.keys(config.quarantinedMembers).length} individual record(s)`,
+        inline: false,
+      },
+      {
+        name: 'Active-Lockdown Guards',
+        value: [
+          `${config.guards.blockNewBots ? '🔒' : '🟢'} Block newly joining bots`,
+          `${config.guards.lockNewChannels ? '🔒' : '🟢'} Lock newly created channels`,
+        ].join('\n'),
+        inline: false,
+      },
     )
     .setFooter({ text: 'Dashboard closes after 10 minutes of inactivity' });
 }
@@ -126,6 +143,16 @@ function buildHomeComponents(config) {
         .setDescription('Roles exempt from anti-nuke triggers')
         .setValue('trusted_roles')
         .setEmoji('🎭'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Member Quarantine')
+        .setDescription('Quarantine everyone except bots, admins, managers, and trusted members')
+        .setValue('bulk_members')
+        .setEmoji('👥'),
+      new StringSelectMenuOptionBuilder()
+        .setLabel('Join & Channel Guards')
+        .setDescription('Control new bots and channels while lockdown is active')
+        .setValue('guards')
+        .setEmoji('🧱'),
     );
 
   const buttons = new ActionRowBuilder().addComponents(
@@ -240,6 +267,63 @@ function buildViewComponents(view, config) {
     return [new ActionRowBuilder().addComponents(select), backRow()];
   }
 
+  if (view === 'bulk_members') {
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(DASH + '_bulk_prepare')
+          .setLabel('Quarantine Everyone')
+          .setStyle(ButtonStyle.Danger)
+          .setDisabled(config.bulkQuarantine.active),
+        new ButtonBuilder()
+          .setCustomId(DASH + '_bulk_restore')
+          .setLabel('Restore Everyone')
+          .setStyle(ButtonStyle.Success)
+          .setDisabled(config.bulkQuarantine.memberIds.length === 0),
+        new ButtonBuilder()
+          .setCustomId(DASH + '_back')
+          .setLabel('Back')
+          .setStyle(ButtonStyle.Secondary),
+      ),
+    ];
+  }
+
+  if (view === 'bulk_confirm') {
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(DASH + '_bulk_confirm')
+          .setLabel('Yes, Quarantine Eligible Members')
+          .setStyle(ButtonStyle.Danger),
+        new ButtonBuilder()
+          .setCustomId(DASH + '_bulk_cancel')
+          .setLabel('Cancel')
+          .setStyle(ButtonStyle.Secondary),
+      ),
+    ];
+  }
+
+  if (view === 'guards') {
+    const select = new StringSelectMenuBuilder()
+      .setCustomId(DASH + '_guards')
+      .setPlaceholder('Select guards enabled while lockdown is active')
+      .setMinValues(0)
+      .setMaxValues(2)
+      .addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Block New Bots')
+          .setDescription('Kick newly joining bots while lockdown is active')
+          .setValue('blockNewBots')
+          .setDefault(config.guards.blockNewBots),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Lock New Channels')
+          .setDescription('Apply lockdown restrictions and snapshot new channels')
+          .setValue('lockNewChannels')
+          .setDefault(config.guards.lockNewChannels),
+      );
+    return [new ActionRowBuilder().addComponents(select), backRow()];
+  }
+
   return buildHomeComponents(config);
 }
 
@@ -250,6 +334,18 @@ function viewEmbed(view, config) {
     alert: ['📢 Alert Channel', 'Pick where anti-nuke quarantine alerts get posted.'],
     trusted_users: ['👤 Trusted Users', 'Select the complete list of users anti-nuke should never quarantine. Submitting replaces the whole list.'],
     trusted_roles: ['🎭 Trusted Roles', 'Select the complete list of roles anti-nuke should never quarantine. Submitting replaces the whole list.'],
+    bulk_members: [
+      '👥 Emergency Member Quarantine',
+      'Removes assignable roles and adds the quarantine role to normal members. Bots, the owner, administrators, Manage Server/Manage Roles members, and trusted users/roles are exempt. Every removed role is snapshotted for **Restore Everyone**. Individual anti-nuke quarantines are kept separate.',
+    ],
+    bulk_confirm: [
+      '⚠️ Confirm Server-Wide Member Quarantine',
+      'This is a high-impact action. Eligible members will lose their assignable roles and receive the quarantine role. The saved snapshots are retained until every member is restored.',
+    ],
+    guards: [
+      '🧱 Join & Channel Guards',
+      'These only act while lockdown is **active**. New bots can be kicked, and new channels can automatically receive the current lockdown restrictions with a restorable snapshot.',
+    ],
   };
   const [title, description] = titles[view] || [];
   if (!title) return buildStatusEmbed(config);
@@ -394,6 +490,98 @@ export async function runLockdownDashboard(interaction, client) {
         }));
         view = 'home';
         await render(comp);
+        return;
+      }
+
+      if (id === DASH + '_guards' && comp.isStringSelectMenu()) {
+        const selected = new Set(comp.values);
+        config = await updateLockdownConfig(client, guildId, (current) => ({
+          ...current,
+          guards: {
+            blockNewBots: selected.has('blockNewBots'),
+            lockNewChannels: selected.has('lockNewChannels'),
+          },
+        }));
+        view = 'home';
+        await render(comp);
+        await comp.followUp({
+          embeds: [successEmbed(
+            'Lockdown Guards Saved',
+            'Guard settings apply only while lockdown is active.',
+          )],
+          flags: MessageFlags.Ephemeral,
+        }).catch(() => {});
+        return;
+      }
+
+      if (id === DASH + '_bulk_prepare') {
+        if (!config.quarantineRoleId) {
+          await replyUserError(comp, {
+            type: ErrorTypes.CONFIGURATION,
+            message: 'Set an assignable quarantine role before using member quarantine.',
+          });
+          return;
+        }
+        view = 'bulk_confirm';
+        await render(comp);
+        return;
+      }
+
+      if (id === DASH + '_bulk_cancel') {
+        view = 'bulk_members';
+        await render(comp);
+        return;
+      }
+
+      if (id === DASH + '_bulk_confirm') {
+        await comp.deferUpdate();
+        const result = await quarantineAllMembers(
+          client,
+          interaction.guild,
+          'Emergency member quarantine by ' + interaction.user.tag,
+        );
+        config = await getLockdownConfig(client, guildId);
+        view = 'bulk_members';
+        await render();
+        const description = result.alreadyActive
+          ? 'A bulk member quarantine is already active. Use **Restore Everyone** first.'
+          : `Quarantined **${result.quarantined}/${result.attempted}** eligible members. ` +
+            `Skipped **${result.exempt}** bots, privileged, or trusted members.` +
+            formatFailures(result);
+        await comp.followUp({
+          embeds: [
+            result.success
+              ? successEmbed('Member Quarantine Complete', description)
+              : warningEmbed('Member Quarantine Result', description),
+          ],
+          flags: MessageFlags.Ephemeral,
+        }).catch(() => {});
+        return;
+      }
+
+      if (id === DASH + '_bulk_restore') {
+        await comp.deferUpdate();
+        const result = await restoreAllQuarantinedMembers(
+          client,
+          interaction.guild,
+          'Emergency member quarantine lifted by ' + interaction.user.tag,
+        );
+        config = await getLockdownConfig(client, guildId);
+        view = 'bulk_members';
+        await render();
+        const description = result.notActive
+          ? 'No saved quarantined members exist.'
+          : `Restored **${result.restored}/${result.attempted}** members.` +
+            (result.leftServer ? ` Cleared **${result.leftServer}** member(s) who left.` : '') +
+            formatFailures(result);
+        await comp.followUp({
+          embeds: [
+            result.success
+              ? successEmbed('Members Restored', description)
+              : warningEmbed('Member Restore Result', description),
+          ],
+          flags: MessageFlags.Ephemeral,
+        }).catch(() => {});
         return;
       }
 
