@@ -51,6 +51,8 @@ const GUILD_CONFIG_DEFAULTS = {
         guards: {
             blockNewBots: false,
             lockNewChannels: true,
+            blockExternalApps: false,
+            externalAppRoleIds: [],
         },
     },
 };

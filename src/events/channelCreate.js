@@ -1,7 +1,10 @@
 import { Events, ChannelType } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from '../utils/logger.js';
-import { handleChannelCreateDuringLockdown } from '../services/lockdownService.js';
+import {
+  enforceConfiguredQuarantineOnChannel,
+  handleChannelCreateDuringLockdown,
+} from '../services/lockdownService.js';
 
 function channelLabel(channel) {
   if (!channel) return 'Unknown';
@@ -15,6 +18,15 @@ export default {
   async execute(channel) {
     try {
       if (!channel.guild) return;
+      try {
+        await enforceConfiguredQuarantineOnChannel(channel.client, channel);
+      } catch (error) {
+        logger.error('Quarantine role new-channel enforcement failed:', {
+          guildId: channel.guild.id,
+          channelId: channel.id,
+          error: error.message,
+        });
+      }
       try {
         await handleChannelCreateDuringLockdown(channel.client, channel);
       } catch (error) {

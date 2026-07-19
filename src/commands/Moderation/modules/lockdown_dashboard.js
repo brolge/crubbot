@@ -19,9 +19,11 @@ import { InteractionHelper } from '../../../utils/interactionHelper.js';
 import {
   engageLockdown,
   getLockdownConfig,
+  hardenQuarantineRole,
   liftLockdown,
   quarantineAllMembers,
   restoreAllQuarantinedMembers,
+  setExternalAppsBlocked,
   updateLockdownConfig,
 } from '../../../services/lockdownService.js';
 
@@ -102,10 +104,11 @@ function buildStatusEmbed(config) {
         inline: false,
       },
       {
-        name: 'Active-Lockdown Guards',
+        name: 'Security Guards',
         value: [
           `${config.guards.blockNewBots ? '🔒' : '🟢'} Block newly joining bots`,
           `${config.guards.lockNewChannels ? '🔒' : '🟢'} Lock newly created channels`,
+          `${config.guards.blockExternalApps ? '🔒' : '🟢'} Block user-installed external apps`,
         ].join('\n'),
         inline: false,
       },
@@ -145,12 +148,12 @@ function buildHomeComponents(config) {
         .setEmoji('🎭'),
       new StringSelectMenuOptionBuilder()
         .setLabel('Member Quarantine')
-        .setDescription('Quarantine everyone except bots, admins, managers, and trusted members')
+        .setDescription('Quarantine everyone except the owner, bots, and trusted users')
         .setValue('bulk_members')
         .setEmoji('👥'),
       new StringSelectMenuOptionBuilder()
         .setLabel('Join & Channel Guards')
-        .setDescription('Control new bots and channels while lockdown is active')
+        .setDescription('Control new bots, channels, and external apps')
         .setValue('guards')
         .setEmoji('🧱'),
     );
@@ -306,9 +309,9 @@ function buildViewComponents(view, config) {
   if (view === 'guards') {
     const select = new StringSelectMenuBuilder()
       .setCustomId(DASH + '_guards')
-      .setPlaceholder('Select guards enabled while lockdown is active')
+      .setPlaceholder('Select security guards to enable')
       .setMinValues(0)
-      .setMaxValues(2)
+      .setMaxValues(3)
       .addOptions(
         new StringSelectMenuOptionBuilder()
           .setLabel('Block New Bots')
@@ -320,6 +323,11 @@ function buildViewComponents(view, config) {
           .setDescription('Apply lockdown restrictions and snapshot new channels')
           .setValue('lockNewChannels')
           .setDefault(config.guards.lockNewChannels),
+        new StringSelectMenuOptionBuilder()
+          .setLabel('Block External Apps')
+          .setDescription('Stop user-installed apps from posting publicly serverwide')
+          .setValue('blockExternalApps')
+          .setDefault(config.guards.blockExternalApps),
       );
     return [new ActionRowBuilder().addComponents(select), backRow()];
   }
@@ -330,21 +338,21 @@ function buildViewComponents(view, config) {
 function viewEmbed(view, config) {
   const titles = {
     restrictions: ['🔒 Lockdown Restrictions', 'Select everything that should be **blocked** when lockdown engages. Unselected items stay allowed. Saves instantly.'],
-    quarantine: ['🚨 Quarantine Role', 'Pick the role that anti-nuke assigns to offenders. It should have no dangerous permissions.'],
+    quarantine: ['🚨 Quarantine Role', 'Pick a dedicated empty role. The bot removes all role permissions, denies access in every channel, and keeps future channels denied too. Assigning this role manually also strips the member’s other assignable roles into a restorable snapshot.'],
     alert: ['📢 Alert Channel', 'Pick where anti-nuke quarantine alerts get posted.'],
     trusted_users: ['👤 Trusted Users', 'Select the complete list of users anti-nuke should never quarantine. Submitting replaces the whole list.'],
     trusted_roles: ['🎭 Trusted Roles', 'Select the complete list of roles anti-nuke should never quarantine. Submitting replaces the whole list.'],
     bulk_members: [
       '👥 Emergency Member Quarantine',
-      'Removes assignable roles and adds the quarantine role to normal members. Bots, the owner, administrators, Manage Server/Manage Roles members, and trusted users/roles are exempt. Every removed role is snapshotted for **Restore Everyone**. Individual anti-nuke quarantines are kept separate.',
+      'Removes assignable roles and adds the quarantine role to members. Only the **server owner**, **bots**, and **individually trusted users** are exempt — admins, mods, and trusted roles are NOT spared. Members at or above the bot’s highest role cannot be safely changed and are reported as skipped. Every removed role is snapshotted for **Restore Everyone**.',
     ],
     bulk_confirm: [
       '⚠️ Confirm Server-Wide Member Quarantine',
-      'This is a high-impact action. Eligible members will lose their assignable roles and receive the quarantine role. The saved snapshots are retained until every member is restored.',
+      'This is a high-impact action. Everyone the bot can manage except the server owner, bots, and individually trusted users — **including admins and mods below the bot** — will lose their assignable roles and receive the quarantine role. The saved snapshots are retained until every member is restored.',
     ],
     guards: [
       '🧱 Join & Channel Guards',
-      'These only act while lockdown is **active**. New bots can be kicked, and new channels can automatically receive the current lockdown restrictions with a restorable snapshot.',
+      '**Block New Bots** and **Lock New Channels** act while lockdown is active. **Block External Apps** is persistent: it removes Discord’s Use External Apps permission from editable roles. Discord Administrators bypass permission restrictions, and an existing channel-specific allow may also override it.',
     ],
   };
   const [title, description] = titles[view] || [];
@@ -433,12 +441,61 @@ export async function runLockdownDashboard(interaction, client) {
           });
           return;
         }
+        await comp.deferUpdate();
+        if (config.quarantineRoleId !== role.id) {
+          const members = await interaction.guild.members.fetch().catch(() => null);
+          if (!members) {
+            await comp.followUp({
+              embeds: [warningEmbed(
+                'Could Not Verify Role Members',
+                'I could not verify that this role is empty. Try again before configuring it.',
+              )],
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
+            return;
+          }
+          if (role.members.size > 0) {
+            await comp.followUp({
+              embeds: [warningEmbed(
+                'Quarantine Role Must Be Empty',
+                `${role} is already assigned to **${role.members.size}** member(s). ` +
+                'Choose a dedicated empty role so nobody is accidentally stripped of their roles.',
+              )],
+              flags: MessageFlags.Ephemeral,
+            }).catch(() => {});
+            return;
+          }
+        }
         config = await updateLockdownConfig(client, guildId, (current) => ({
           ...current,
           quarantineRoleId: role.id,
         }));
+        const result = await hardenQuarantineRole(
+          client,
+          interaction.guild,
+          role,
+          'Quarantine role configured by ' + interaction.user.tag + ' (dashboard)',
+        );
+        config = await getLockdownConfig(client, guildId);
         view = 'home';
-        await render(comp);
+        await render();
+        const description = [
+          `${role} now has **zero server permissions** and is denied channel access.`,
+          `Locked **${result.channelsUpdated}/${result.attemptedChannels}** channels.`,
+          `Enforced isolation on **${result.membersEnforced}** existing member(s).`,
+          result.membersSkipped
+            ? `Skipped **${result.membersSkipped}** owner, bot, unmanageable, or already-recorded member(s).`
+            : null,
+          result.bounded ? 'The channel operation was capped at 500 channels.' : null,
+        ].filter(Boolean).join('\n') + formatFailures(result);
+        await comp.followUp({
+          embeds: [
+            result.success
+              ? successEmbed('Quarantine Role Hardened', description)
+              : warningEmbed('Quarantine Role Partially Hardened', description),
+          ],
+          flags: MessageFlags.Ephemeral,
+        }).catch(() => {});
         return;
       }
 
@@ -494,21 +551,47 @@ export async function runLockdownDashboard(interaction, client) {
       }
 
       if (id === DASH + '_guards' && comp.isStringSelectMenu()) {
+        await comp.deferUpdate();
         const selected = new Set(comp.values);
+        const blockExternalApps = selected.has('blockExternalApps');
+        let externalAppsResult = null;
+        if (blockExternalApps !== config.guards.blockExternalApps) {
+          externalAppsResult = await setExternalAppsBlocked(
+            client,
+            interaction.guild,
+            blockExternalApps,
+            'External app guard updated by ' + interaction.user.tag + ' (dashboard)',
+          );
+        }
         config = await updateLockdownConfig(client, guildId, (current) => ({
           ...current,
           guards: {
+            ...current.guards,
             blockNewBots: selected.has('blockNewBots'),
             lockNewChannels: selected.has('lockNewChannels'),
+            blockExternalApps,
           },
         }));
         view = 'home';
-        await render(comp);
+        await render();
+        const externalAppsLine = externalAppsResult
+          ? `\nExternal apps: updated **${externalAppsResult.updated}/${externalAppsResult.attempted}** role(s).` +
+            formatFailures(externalAppsResult)
+          : '';
         await comp.followUp({
-          embeds: [successEmbed(
-            'Lockdown Guards Saved',
-            'Guard settings apply only while lockdown is active.',
-          )],
+          embeds: [
+            externalAppsResult && !externalAppsResult.success
+              ? warningEmbed(
+                  'Security Guards Partially Saved',
+                  'Bot and channel guards apply while lockdown is active. External-app blocking is persistent for non-admin users without overriding channel allows.' +
+                  externalAppsLine,
+                )
+              : successEmbed(
+                  'Security Guards Saved',
+                  'Bot and channel guards apply while lockdown is active. External-app blocking is persistent for non-admin users without overriding channel allows.' +
+                  externalAppsLine,
+                ),
+          ],
           flags: MessageFlags.Ephemeral,
         }).catch(() => {});
         return;
@@ -546,7 +629,7 @@ export async function runLockdownDashboard(interaction, client) {
         const description = result.alreadyActive
           ? 'A bulk member quarantine is already active. Use **Restore Everyone** first.'
           : `Quarantined **${result.quarantined}/${result.attempted}** eligible members. ` +
-            `Skipped **${result.exempt}** bots, privileged, or trusted members.` +
+            `Skipped **${result.exempt}** exempt or unmanageable member(s) (owner, bots, trusted users, or roles at/above the bot).` +
             formatFailures(result);
         await comp.followUp({
           embeds: [

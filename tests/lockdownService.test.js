@@ -150,6 +150,8 @@ test('normalizeLockdownConfig supplies safe defaults and deduplicates trust list
   assert.deepEqual(config.guards, {
     blockNewBots: false,
     lockNewChannels: true,
+    blockExternalApps: false,
+    externalAppRoleIds: [],
   });
 });
 
@@ -163,6 +165,8 @@ test('normalizeLockdownConfig preserves bulk quarantine and guard controls', () 
     guards: {
       blockNewBots: true,
       lockNewChannels: false,
+      blockExternalApps: true,
+      externalAppRoleIds: ['role-one', 'role-one', 'role-two'],
     },
   });
 
@@ -170,4 +174,6 @@ test('normalizeLockdownConfig preserves bulk quarantine and guard controls', () 
   assert.equal(config.bulkQuarantine.active, true);
   assert.equal(config.guards.blockNewBots, true);
   assert.equal(config.guards.lockNewChannels, false);
+  assert.equal(config.guards.blockExternalApps, true);
+  assert.deepEqual(config.guards.externalAppRoleIds, ['role-one', 'role-two']);
 });

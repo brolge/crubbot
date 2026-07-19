@@ -53,6 +53,12 @@ export function normalizeLockdownConfig(raw = {}) {
     guards: {
       blockNewBots: value.guards?.blockNewBots === true,
       lockNewChannels: value.guards?.lockNewChannels !== false,
+      blockExternalApps: value.guards?.blockExternalApps === true,
+      externalAppRoleIds: [...new Set(
+        Array.isArray(value.guards?.externalAppRoleIds)
+          ? value.guards.externalAppRoleIds
+          : [],
+      )].slice(0, 250),
     },
   };
 }

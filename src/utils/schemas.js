@@ -126,6 +126,8 @@ const LockdownConfigSchema = z
     guards: z.object({
       blockNewBots: z.boolean().default(false),
       lockNewChannels: z.boolean().default(true),
+      blockExternalApps: z.boolean().default(false),
+      externalAppRoleIds: z.array(z.string()).max(250).default([]),
     }).default({}),
   })
   .default({});

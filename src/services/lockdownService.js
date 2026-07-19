@@ -24,6 +24,42 @@ import {
 export const MAX_LOCKDOWN_CHANNELS = 500;
 export const MAX_QUARANTINE_ROLES = 250;
 
+export const QUARANTINE_CHANNEL_DENIES = Object.freeze({
+  ViewChannel: false,
+  CreateInstantInvite: false,
+  AddReactions: false,
+  SendMessages: false,
+  SendTTSMessages: false,
+  ManageMessages: false,
+  EmbedLinks: false,
+  AttachFiles: false,
+  ReadMessageHistory: false,
+  MentionEveryone: false,
+  UseExternalEmojis: false,
+  Connect: false,
+  Speak: false,
+  Stream: false,
+  UseVAD: false,
+  PrioritySpeaker: false,
+  MuteMembers: false,
+  DeafenMembers: false,
+  MoveMembers: false,
+  UseApplicationCommands: false,
+  RequestToSpeak: false,
+  ManageThreads: false,
+  CreatePublicThreads: false,
+  CreatePrivateThreads: false,
+  UseExternalStickers: false,
+  SendMessagesInThreads: false,
+  UseEmbeddedActivities: false,
+  UseSoundboard: false,
+  UseExternalSounds: false,
+  SendVoiceMessages: false,
+  CreateEvents: false,
+  ManageEvents: false,
+  SendPolls: false,
+});
+
 const channelDeletionWindows = new Map();
 const roleDeletionWindows = new Map();
 const guildOperations = new Map();
@@ -57,6 +93,140 @@ export async function updateLockdownConfig(client, guildId, updater) {
     await saveLockdownConfig(client, guildId, updated);
     return updated;
   });
+}
+
+function canEditSecurityRole(guild, role) {
+  if (!role || role.managed) return false;
+  if (role.id === guild.id) {
+    return guild.members.me?.permissions.has(PermissionFlagsBits.ManageRoles) === true;
+  }
+  return role.editable;
+}
+
+export async function setExternalAppsBlocked(
+  client,
+  guild,
+  blocked,
+  reason = 'Update external app security policy',
+) {
+  await guild.roles.fetch().catch(() => null);
+  const current = await getLockdownConfig(client, guild.id);
+  const permission = PermissionFlagsBits.UseExternalApps;
+  const failures = [];
+  let updated = 0;
+
+  if (blocked) {
+    const rolesWithPermission = [...guild.roles.cache.values()]
+      .filter((role) => role.permissions.has(permission, false));
+    const roleIds = [...new Set([
+      ...current.guards.externalAppRoleIds,
+      ...rolesWithPermission.map((role) => role.id),
+    ])].slice(0, 250);
+
+    await updateLockdownConfig(client, guild.id, (config) => ({
+      ...config,
+      guards: {
+        ...config.guards,
+        blockExternalApps: true,
+        externalAppRoleIds: roleIds,
+      },
+    }));
+
+    for (const role of rolesWithPermission) {
+      if (!canEditSecurityRole(guild, role)) {
+        failures.push(`${role.name}: role is above the bot or managed`);
+        continue;
+      }
+      try {
+        await role.setPermissions(role.permissions.bitfield & ~permission, reason);
+        updated += 1;
+      } catch (error) {
+        failures.push(`${role.name}: ${error.message}`);
+      }
+    }
+
+    return {
+      success: failures.length === 0,
+      blocked: true,
+      attempted: rolesWithPermission.length,
+      updated,
+      failures,
+    };
+  }
+
+  const roleIds = [...current.guards.externalAppRoleIds];
+  await updateLockdownConfig(client, guild.id, (config) => ({
+    ...config,
+    guards: {
+      ...config.guards,
+      blockExternalApps: false,
+    },
+  }));
+
+  const unresolved = [];
+  for (const roleId of roleIds) {
+    const role = guild.roles.cache.get(roleId);
+    if (!role) continue;
+    if (!canEditSecurityRole(guild, role)) {
+      failures.push(`${role.name}: role is above the bot or managed`);
+      unresolved.push(roleId);
+      continue;
+    }
+    try {
+      await role.setPermissions(role.permissions.bitfield | permission, reason);
+      updated += 1;
+    } catch (error) {
+      failures.push(`${role.name}: ${error.message}`);
+      unresolved.push(roleId);
+    }
+  }
+
+  await updateLockdownConfig(client, guild.id, (config) => ({
+    ...config,
+    guards: {
+      ...config.guards,
+      blockExternalApps: false,
+      externalAppRoleIds: unresolved,
+    },
+  }));
+
+  return {
+    success: failures.length === 0,
+    blocked: false,
+    attempted: roleIds.length,
+    updated,
+    failures,
+  };
+}
+
+export async function enforceExternalAppRolePolicy(client, role) {
+  if (!role?.guild) return { ignored: 'not_guild_role' };
+  const lockdown = await getLockdownConfig(client, role.guild.id);
+  if (
+    !lockdown.guards.blockExternalApps
+    || !role.permissions.has(PermissionFlagsBits.UseExternalApps, false)
+  ) {
+    return { ignored: 'not_required' };
+  }
+  if (!canEditSecurityRole(role.guild, role)) {
+    return { ignored: 'not_editable' };
+  }
+
+  await updateLockdownConfig(client, role.guild.id, (config) => ({
+    ...config,
+    guards: {
+      ...config.guards,
+      externalAppRoleIds: [...new Set([
+        ...config.guards.externalAppRoleIds,
+        role.id,
+      ])].slice(0, 250),
+    },
+  }));
+  await role.setPermissions(
+    role.permissions.bitfield & ~PermissionFlagsBits.UseExternalApps,
+    'External app posting is blocked in this server',
+  );
+  return { enforced: true, roleId: role.id };
 }
 
 function manageableChannels(guild) {
@@ -182,6 +352,103 @@ export async function liftLockdown(client, guild, reason = 'Server lockdown lift
 
     return { success: failures.length === 0, attempted: states.length, succeeded, failures };
   });
+}
+
+export async function applyQuarantineRoleToChannel(
+  channel,
+  quarantineRole,
+  reason = 'Enforce quarantine isolation',
+) {
+  if (
+    !channel?.permissionOverwrites?.cache
+    || typeof channel.permissionOverwrites.edit !== 'function'
+    || !quarantineRole
+  ) {
+    return false;
+  }
+  await channel.permissionOverwrites.edit(
+    quarantineRole,
+    QUARANTINE_CHANNEL_DENIES,
+    { reason },
+  );
+  return true;
+}
+
+export async function hardenQuarantineRole(
+  client,
+  guild,
+  quarantineRole,
+  reason = 'Harden quarantine role',
+) {
+  if (!quarantineRole?.editable || quarantineRole.managed || quarantineRole.id === guild.id) {
+    throw new Error('Configured quarantine role is missing or not assignable');
+  }
+
+  const failures = [];
+  let channelsUpdated = 0;
+  try {
+    await quarantineRole.setPermissions([], reason);
+  } catch (error) {
+    failures.push(`role permissions: ${error.message}`);
+  }
+
+  const channels = manageableChannels(guild);
+  for (const channel of channels) {
+    try {
+      await applyQuarantineRoleToChannel(channel, quarantineRole, reason);
+      channelsUpdated += 1;
+    } catch (error) {
+      failures.push(`${channel.id}: ${error.message}`);
+    }
+  }
+
+  await guild.members.fetch().catch(() => null);
+  let membersEnforced = 0;
+  let membersSkipped = 0;
+  let lockdown = await getLockdownConfig(client, guild.id);
+  for (const member of quarantineRole.members.values()) {
+    if (
+      member.id === guild.ownerId
+      || member.user.bot
+      || !member.manageable
+      || lockdown.quarantinedMembers[member.id]
+    ) {
+      membersSkipped += 1;
+      continue;
+    }
+    try {
+      await quarantineMember(client, guild, member, lockdown, reason);
+      membersEnforced += 1;
+      lockdown = await getLockdownConfig(client, guild.id);
+    } catch (error) {
+      failures.push(`${member.user.tag} (${member.id}): ${error.message}`);
+    }
+  }
+
+  return {
+    success: failures.length === 0,
+    attemptedChannels: channels.length,
+    channelsUpdated,
+    membersEnforced,
+    membersSkipped,
+    failures,
+    bounded: guild.channels.cache.size > MAX_LOCKDOWN_CHANNELS,
+  };
+}
+
+export async function enforceConfiguredQuarantineOnChannel(client, channel) {
+  if (!channel?.guild) return { ignored: 'not_guild_channel' };
+  const lockdown = await getLockdownConfig(client, channel.guild.id);
+  const role = lockdown.quarantineRoleId
+    ? channel.guild.roles.cache.get(lockdown.quarantineRoleId)
+    : null;
+  if (!role) return { ignored: 'not_configured' };
+  await applyQuarantineRoleToChannel(
+    channel,
+    role,
+    'Apply quarantine isolation to new channel',
+  );
+  return { applied: true, roleId: role.id, channelId: channel.id };
 }
 
 export async function quarantineMember(client, guild, member, lockdown, reason) {
@@ -316,17 +583,17 @@ export async function unquarantineMember(client, guild, userId, reason = 'Quaran
   };
 }
 
+// Intentionally strict: only the server owner, bots, individually trusted
+// users, and members Discord will not let this bot manage are spared. Trusted
+// roles and permission levels do not provide an exemption by themselves.
 function isBulkQuarantineExempt(client, guild, member, lockdown) {
   if (!member || member.user.bot) return true;
   if (member.id === guild.ownerId || member.id === client.user?.id) return true;
-  if (lockdown.trustedUserIds.includes(member.id)) return true;
-  if ([...member.roles.cache.keys()].some((id) => lockdown.trustedRoleIds.includes(id))) return true;
-  if ([...member.roles.cache.values()].some(
-    (role) => role.id !== guild.id && !role.managed && !role.editable,
-  )) return true;
-  return member.permissions.has(PermissionFlagsBits.Administrator)
-    || member.permissions.has(PermissionFlagsBits.ManageGuild)
-    || member.permissions.has(PermissionFlagsBits.ManageRoles);
+  // Discord will not let the bot safely strip a member whose highest role is
+  // at or above its own. Skipping avoids removing only their harmless roles
+  // while leaving the powerful, unmanageable role intact.
+  if (!member.manageable) return true;
+  return lockdown.trustedUserIds.includes(member.id);
 }
 
 export async function quarantineAllMembers(

@@ -10,7 +10,9 @@ import { handleInteractionError } from '../../utils/errorHandler.js';
 import {
   engageLockdown,
   getLockdownConfig,
+  hardenQuarantineRole,
   liftLockdown,
+  setExternalAppsBlocked,
   updateLockdownConfig,
 } from '../../services/lockdownService.js';
 import { runLockdownDashboard } from './modules/lockdown_dashboard.js';
@@ -64,7 +66,7 @@ export default {
       .setDescription('Set the role assigned to quarantined executors')
       .addRoleOption(option => option
         .setName('role')
-        .setDescription('Assignable quarantine role')
+        .setDescription('Dedicated empty role to fully isolate quarantined members')
         .setRequired(true)))
     .addSubcommand(subcommand => subcommand
       .setName('alert-channel')
@@ -90,6 +92,13 @@ export default {
       .addBooleanOption(option => option
         .setName('enabled')
         .setDescription('Whether anti-nuke should monitor channel deletions')
+        .setRequired(true)))
+    .addSubcommand(subcommand => subcommand
+      .setName('external-apps')
+      .setDescription('Block user-installed apps that are not installed in this server')
+      .addBooleanOption(option => option
+        .setName('blocked')
+        .setDescription('Prevent external apps from posting public responses')
         .setRequired(true)))
     .addSubcommand(subcommand => subcommand
       .setName('engage')
@@ -134,13 +143,53 @@ export default {
             flags: MessageFlags.Ephemeral,
           });
         }
+        await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
+        const current = await getLockdownConfig(client, interaction.guildId);
+        if (current.quarantineRoleId !== role.id) {
+          const members = await interaction.guild.members.fetch().catch(() => null);
+          if (!members) {
+            return InteractionHelper.safeEditReply(interaction, {
+              embeds: [errorEmbed(
+                'Could Not Verify Role Members',
+                'I could not verify that this role is empty. Try again before configuring it.',
+              )],
+            });
+          }
+          if (role.members.size > 0) {
+            return InteractionHelper.safeEditReply(interaction, {
+              embeds: [errorEmbed(
+                'Quarantine Role Must Be Empty',
+                `${role} is already assigned to **${role.members.size}** member(s). ` +
+                'Use a dedicated empty role so nobody is accidentally stripped of their roles.',
+              )],
+            });
+          }
+        }
         await updateLockdownConfig(client, interaction.guildId, current => ({
           ...current,
           quarantineRoleId: role.id,
         }));
-        return InteractionHelper.universalReply(interaction, {
-          embeds: [successEmbed('Quarantine Role Saved', `${role} will be assigned when anti-nuke triggers.`)],
-          flags: MessageFlags.Ephemeral,
+        const result = await hardenQuarantineRole(
+          client,
+          interaction.guild,
+          role,
+          `Quarantine role configured by ${interaction.user.tag}`,
+        );
+        const description = [
+          `${role} now has **zero server permissions** and is denied channel access.`,
+          `Locked **${result.channelsUpdated}/${result.attemptedChannels}** channels.`,
+          `Enforced isolation on **${result.membersEnforced}** existing member(s).`,
+          result.membersSkipped
+            ? `Skipped **${result.membersSkipped}** owner, bot, unmanageable, or already-recorded member(s).`
+            : null,
+          result.bounded ? 'The channel operation was capped at 500 channels.' : null,
+        ].filter(Boolean).join('\n') + formatFailures(result);
+        return InteractionHelper.safeEditReply(interaction, {
+          embeds: [
+            result.success
+              ? successEmbed('Quarantine Role Hardened', description)
+              : warningEmbed('Quarantine Role Partially Hardened', description),
+          ],
         });
       }
 
@@ -202,6 +251,34 @@ export default {
         return InteractionHelper.universalReply(interaction, {
           embeds: [successEmbed('Anti-Nuke Updated', `Channel-deletion anti-nuke is now **${enabled ? 'enabled' : 'disabled'}**.`)],
           flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      if (subcommand === 'external-apps') {
+        const blocked = interaction.options.getBoolean('blocked', true);
+        await InteractionHelper.safeDefer(interaction, { flags: MessageFlags.Ephemeral });
+        const result = await setExternalAppsBlocked(
+          client,
+          interaction.guild,
+          blocked,
+          `External app policy updated by ${interaction.user.tag}`,
+        );
+        const description = [
+          blocked
+            ? 'User-installed apps can no longer post public responses for non-admin members unless a channel-specific overwrite explicitly allows it.'
+            : 'External-app posting permissions were restored to roles that previously had them.',
+          `Updated **${result.updated}/${result.attempted}** role(s).`,
+          formatFailures(result),
+        ].filter(Boolean).join('\n');
+        return InteractionHelper.safeEditReply(interaction, {
+          embeds: [
+            result.success
+              ? successEmbed(
+                  blocked ? 'External Apps Blocked' : 'External Apps Allowed',
+                  description,
+                )
+              : warningEmbed('External App Policy Partially Applied', description),
+          ],
         });
       }
 

@@ -1,6 +1,10 @@
 import { Events } from 'discord.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { logger } from '../utils/logger.js';
+import {
+  getLockdownConfig,
+  quarantineMember,
+} from '../services/lockdownService.js';
 
 export default {
   name: Events.GuildMemberUpdate,
@@ -33,6 +37,37 @@ export default {
       const newRoles = new Set(newMember.roles.cache.keys());
       const added = [...newRoles].filter((roleId) => !oldRoles.has(roleId) && roleId !== newMember.guild.id);
       const removed = [...oldRoles].filter((roleId) => !newRoles.has(roleId) && roleId !== newMember.guild.id);
+
+      if (added.length) {
+        const lockdown = await getLockdownConfig(newMember.client, newMember.guild.id);
+        if (
+          lockdown.quarantineRoleId
+          && added.includes(lockdown.quarantineRoleId)
+          && !lockdown.quarantinedMembers[newMember.id]
+        ) {
+          if (
+            newMember.id === newMember.guild.ownerId
+            || newMember.user.bot
+            || !newMember.manageable
+          ) {
+            logger.warn('Could not fully enforce manually assigned quarantine role', {
+              guildId: newMember.guild.id,
+              userId: newMember.id,
+              owner: newMember.id === newMember.guild.ownerId,
+              bot: newMember.user.bot,
+              manageable: newMember.manageable,
+            });
+          } else {
+            await quarantineMember(
+              newMember.client,
+              newMember.guild,
+              newMember,
+              lockdown,
+              'Quarantine role manually assigned',
+            );
+          }
+        }
+      }
 
       for (const roleId of added) {
         const role = newMember.guild.roles.cache.get(roleId);
