@@ -390,7 +390,12 @@ function normalizeWelcomeConfig(raw = {}) {
         footer: "Goodbye from {server}!"
     };
 
-    const roleIds = Array.isArray(base.roleIds) ? base.roleIds : [];
+    const roleIds = Array.isArray(base.roleIds)
+        ? [...new Set(base.roleIds.map(String).filter(Boolean))]
+        : [];
+    const quotes = Array.isArray(base.quotes)
+        ? base.quotes.map((quote) => String(quote || '').trim()).filter(Boolean).slice(0, 50)
+        : [];
 
     return {
         ...base,
@@ -404,10 +409,13 @@ function normalizeWelcomeConfig(raw = {}) {
         goodbyeChannelId,
         leaveMessage,
         leaveEmbed,
-        dmMessage: base.dmMessage ?? "",
+        dmEnabled: Boolean(base.dmEnabled),
+        dmMessage: typeof base.dmMessage === 'string' ? base.dmMessage : '',
         goodbyePing: Boolean(base.goodbyePing),
         roleIds,
-        autoRoleDelay: base.autoRoleDelay ?? 0,
+        autoRoleDelay: Math.max(0, Number(base.autoRoleDelay) || 0),
+        quotesEnabled: Boolean(base.quotesEnabled),
+        quotes,
         joinLogs: base.joinLogs ?? { enabled: false, channelId: null },
         leaveLogs: base.leaveLogs ?? { enabled: false, channelId: null }
     };

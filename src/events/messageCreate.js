@@ -18,6 +18,7 @@ import {
   recordCorrectCount,
 } from '../services/countingGameService.js';
 import { handleLevelClapback } from '../services/levelClapbackService.js';
+import { handleApplicationDmMessage } from '../commands/Community/apply.js';
 
 const MESSAGE_XP_RATE_LIMIT_ATTEMPTS = 12;
 const MESSAGE_XP_RATE_LIMIT_WINDOW_MS = 10000;
@@ -26,7 +27,17 @@ export default {
   name: Events.MessageCreate,
   async execute(message, client) {
     try {
-      if (message.author.bot || !message.guild) return;
+      if (message.author.bot) return;
+
+      if (!message.guild) {
+        await handleApplicationDmMessage(message, client).catch((error) => {
+          logger.error('DM application handler failed:', {
+            userId: message.author.id,
+            error: error.message,
+          });
+        });
+        return;
+      }
 
       logger.debug(`Message received from ${message.author.tag}: ${message.content}`);
 

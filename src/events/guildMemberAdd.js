@@ -2,7 +2,7 @@ import { Events, EmbedBuilder, PermissionFlagsBits } from 'discord.js';
 import { getColor } from '../config/bot.js';
 import { getGuildConfig } from '../services/guildConfig.js';
 import { getWelcomeConfig } from '../utils/database.js';
-import { formatWelcomeMessage } from '../utils/welcome.js';
+import { formatWelcomeMessage, pickWelcomeQuote } from '../utils/welcome.js';
 import { logEvent, EVENT_TYPES } from '../services/loggingService.js';
 import { getServerCounters, updateCounter } from '../services/serverstatsService.js';
 import { setBirthday as dbSetBirthday } from '../utils/database.js';
@@ -77,6 +77,15 @@ export default {
                         )
                         .setTimestamp()
                         .setFooter({ text: embedFooter });
+
+                    const quote = pickWelcomeQuote(welcomeConfig);
+                    if (quote) {
+                        embed.addFields({
+                            name: 'Quote',
+                            value: formatWelcomeMessage(quote, formatData),
+                            inline: false,
+                        });
+                    }
                     
                     if (welcomeConfig.welcomeImage) {
                         embed.setImage(welcomeConfig.welcomeImage);
@@ -91,26 +100,42 @@ export default {
                 }
             }
         }
+
+        if (welcomeConfig?.dmEnabled && welcomeConfig.dmMessage) {
+            try {
+                const dmText = formatWelcomeMessage(welcomeConfig.dmMessage, { user, guild, member });
+                if (dmText.trim()) {
+                    await user.send({ content: dmText }).catch(() => null);
+                }
+            } catch (error) {
+                logger.debug('Welcome DM failed:', error.message);
+            }
+        }
         
         if (welcomeConfig?.roleIds && welcomeConfig.roleIds.length > 0) {
             const delay = welcomeConfig.autoRoleDelay || 0;
-            const singleRoleId = welcomeConfig.roleIds[0];
-            
-            if (delay > 0) {
-                const timeout = setTimeout(async () => {
-                    const role = guild.roles.cache.get(singleRoleId);
+            const roleIds = welcomeConfig.roleIds;
+
+            const assignAll = async () => {
+                for (const roleId of roleIds) {
+                    const role = guild.roles.cache.get(roleId);
                     if (role) {
                         await assignRoleSafely(member, role);
                     }
+                }
+            };
+            
+            if (delay > 0) {
+                const timeout = setTimeout(() => {
+                    assignAll().catch((error) => {
+                        logger.debug('Delayed autorole failed:', error.message);
+                    });
                 }, delay * 1000);
                 if (typeof timeout.unref === 'function') {
                     timeout.unref();
                 }
             } else {
-                const role = guild.roles.cache.get(singleRoleId);
-                if (role) {
-                    await assignRoleSafely(member, role);
-                }
+                await assignAll();
             }
         }
         

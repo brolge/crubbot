@@ -7,6 +7,9 @@ const COLLECTOR_MANAGED_PREFIXES = [
   'chperm_',
   'ld_dash_',
   'ss_dash_',
+  'panel_hub_',
+  'welcomer_',
+  'greet_cfg_',
 ];
 
 export function isCollectorManagedComponent(customId = '') {

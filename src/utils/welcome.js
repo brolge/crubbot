@@ -71,3 +71,23 @@ export function getDefaultWelcomeMessage() {
 export function getDefaultGoodbyeMessage() {
     return DEFAULT_TEMPLATES.goodbye;
 }
+
+const BUILTIN_WELCOME_QUOTES = [
+    'Glad you made it — pull up a chair.',
+    'New face, same good vibes. Welcome in.',
+    'You belong here. Make yourself at home.',
+    'Fresh energy just walked through the door.',
+    'The server just got a little more interesting.',
+    'Welcome aboard — don\'t be shy in chat.',
+    'Another legend joins the roster.',
+    'Kick your feet up. You\'re among friends now.',
+];
+
+export function pickWelcomeQuote(config = {}) {
+    const custom = Array.isArray(config.quotes) ? config.quotes.filter(Boolean) : [];
+    const pool = custom.length > 0 ? custom : BUILTIN_WELCOME_QUOTES;
+    if (!config.quotesEnabled || pool.length === 0) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+}
+
+export { BUILTIN_WELCOME_QUOTES };

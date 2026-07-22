@@ -1,5 +1,4 @@
-import { SlashCommandBuilder, PermissionFlagsBits, MessageFlags } from 'discord.js';
-import { InteractionHelper } from '../../utils/interactionHelper.js';
+import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { logger } from '../../utils/logger.js';
 import { handleInteractionError, CrubError, ErrorTypes, replyUserError } from '../../utils/errorHandler.js';
 import greetDashboard from './modules/greet_dashboard.js';
@@ -8,12 +7,12 @@ export default {
     slashOnly: true,
     data: new SlashCommandBuilder()
         .setName('greet')
-        .setDescription('Manage welcome & goodbye settings')
+        .setDescription('Manage welcome & goodbye settings (alias of /welcomer)')
         .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('dashboard')
-                .setDescription('Open the welcome & goodbye configuration dashboard'),
+                .setDescription('Open the welcomer configuration dashboard'),
         ),
 
     async execute(interaction, config, client) {
