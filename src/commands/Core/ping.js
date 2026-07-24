@@ -10,8 +10,50 @@ import { InteractionHelper } from '../../utils/interactionHelper.js';
 import { ErrorTypes, replyUserError } from '../../utils/errorHandler.js';
 
 const MIN_PINGS = 2;
-const MAX_PINGS = 15;
+const MAX_PINGS = 500;
 const DEFAULT_PINGS = 5;
+const SEND_CONCURRENCY = 8;
+const BULK_DELETE_CHUNK = 100;
+const PROGRESS_EVERY = 40;
+
+async function bulkDeleteMessages(channel, messages) {
+    const ids = messages.map((message) => message.id).filter(Boolean);
+    for (let i = 0; i < ids.length; i += BULK_DELETE_CHUNK) {
+        const chunk = ids.slice(i, i + BULK_DELETE_CHUNK);
+        if (chunk.length === 1) {
+            await channel.messages.delete(chunk[0]).catch(() => {});
+            continue;
+        }
+        await channel.bulkDelete(chunk, true).catch(async () => {
+            // Fallback if bulk delete fails (e.g. mixed ages): delete in parallel bursts.
+            await Promise.allSettled(chunk.map((id) => channel.messages.delete(id)));
+        });
+    }
+}
+
+async function sendPingBurst(channel, targetId, count, content) {
+    const messages = [];
+    let index = 0;
+
+    async function worker() {
+        while (index < count) {
+            const current = index;
+            index += 1;
+            const message = await channel.send({
+                content,
+                allowedMentions: { users: [targetId] },
+            });
+            messages[current] = message;
+        }
+    }
+
+    const workers = Array.from(
+        { length: Math.min(SEND_CONCURRENCY, count) },
+        () => worker(),
+    );
+    await Promise.all(workers);
+    return messages.filter(Boolean);
+}
 
 async function runLatencyCheck(interaction) {
     await InteractionHelper.safeEditReply(interaction, {
@@ -87,49 +129,76 @@ async function runMassPing(interaction) {
         });
     }
 
+    const startedAt = Date.now();
     await InteractionHelper.safeEditReply(interaction, {
         embeds: [
             successEmbed(
                 '📢 Mass Ping',
-                `Sending **${amount}** attention pings to ${target} — only the last one will stay.`,
+                `Firing **${amount}** pings at ${target} as fast as Discord allows — cleanup happens in bulk at the end.`,
             ),
         ],
     });
 
-    let kept = null;
+    const sentMessages = [];
     let sent = 0;
 
     try {
-        for (let i = 1; i <= amount; i++) {
-            const isLast = i === amount;
-            const content = isLast
-                ? `${target} — check here · pinged by ${interaction.user}`
-                : `${target}`;
+        // Send disposable pings in parallel bursts (no deletes mid-flight).
+        const disposableCount = amount - 1;
+        while (sent < disposableCount) {
+            const batchSize = Math.min(SEND_CONCURRENCY, disposableCount - sent);
+            const batch = await sendPingBurst(
+                channel,
+                target.id,
+                batchSize,
+                `${target}`,
+            );
+            sentMessages.push(...batch);
+            sent += batch.length;
 
-            const message = await channel.send({
-                content,
-                allowedMentions: { users: [target.id] },
-            });
-            sent += 1;
-
-            if (kept) {
-                await kept.delete().catch(() => {});
+            if (sent % PROGRESS_EVERY < SEND_CONCURRENCY || sent === disposableCount) {
+                await InteractionHelper.safeEditReply(interaction, {
+                    embeds: [
+                        successEmbed(
+                            '📢 Mass Ping',
+                            `Sent **${sent}/${amount}**… finishing burst.`,
+                        ),
+                    ],
+                }).catch(() => {});
             }
-            kept = message;
         }
+
+        // Final ping stays visible so they can jump to this channel.
+        await channel.send({
+            content: `${target} — check here · pinged by ${interaction.user}`,
+            allowedMentions: { users: [target.id] },
+        });
+        sent += 1;
 
         await InteractionHelper.safeEditReply(interaction, {
             embeds: [
                 successEmbed(
+                    '📢 Mass Ping',
+                    `Cleaning up **${sentMessages.length}** temporary pings…`,
+                ),
+            ],
+        }).catch(() => {});
+
+        await bulkDeleteMessages(channel, sentMessages);
+
+        const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
+        await InteractionHelper.safeEditReply(interaction, {
+            embeds: [
+                successEmbed(
                     '📢 Mass Ping Done',
-                    `Fired **${sent}** pings at ${target}. All but the last were deleted so they can still jump to this channel.`,
+                    `Fired **${sent}** pings at ${target} in **${elapsedSec}s**. Only the last message remains.`,
                 ),
             ],
         });
     } catch (error) {
         logger.error('Mass ping failed:', error);
-        if (kept) {
-            await kept.delete().catch(() => {});
+        if (sentMessages.length) {
+            await bulkDeleteMessages(channel, sentMessages).catch(() => {});
         }
         return replyUserError(interaction, {
             type: ErrorTypes.DISCORD_API,
@@ -157,7 +226,7 @@ export default {
                 .setMaxValue(MAX_PINGS),
         ),
     category: 'Core',
-    abuseProtection: { maxAttempts: 3, windowMs: 45_000 },
+    abuseProtection: { maxAttempts: 2, windowMs: 60_000 },
 
     async prefixExecute(interaction) {
         try {
