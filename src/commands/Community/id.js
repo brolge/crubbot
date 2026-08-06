@@ -14,6 +14,8 @@ import {
     checkIdCardAccess,
 } from '../../services/idCardService.js';
 
+const MAX_STATUS_LINES = 25;
+
 // ───────────────── Subcommand: /id card ─────────────────
 
 async function runCard(interaction) {
@@ -103,6 +105,22 @@ async function runCard(interaction) {
         .join(', ') || 'None';
 
     embed.addFields({ name: 'Top Roles', value: topRoles, inline: false });
+
+    // ── Role-based status lines ──
+    // Each entry in config.statusLines is { roleId, text }.
+    // If the member has the role, the text appears on their card.
+    const statusLines = config.statusLines || [];
+    const matchedLines = statusLines
+        .filter((entry) => member.roles.cache.has(entry.roleId))
+        .map((entry) => entry.text);
+
+    if (matchedLines.length > 0) {
+        embed.addFields({
+            name: 'Status',
+            value: matchedLines.map((line) => `> ${line}`).join('\n'),
+            inline: false,
+        });
+    }
 
     if (bannerUrl) {
         embed.setImage(bannerUrl);
@@ -207,6 +225,82 @@ async function runSetup(interaction) {
         return;
     }
 
+    // ── Status line management ──
+
+    if (sub === 'add-status') {
+        const role = interaction.options.getRole('role', true);
+        const text = interaction.options.getString('text', true);
+        const config = await getIdCardConfig(interaction.client, interaction.guildId);
+        const statusLines = [...(config.statusLines || [])];
+
+        if (statusLines.length >= MAX_STATUS_LINES) {
+            return replyUserError(interaction, {
+                type: ErrorTypes.VALIDATION,
+                message: `You can have at most **${MAX_STATUS_LINES}** status lines. Remove one first.`,
+            });
+        }
+
+        // Prevent exact duplicates (same role + same text)
+        const duplicate = statusLines.some(
+            (entry) => entry.roleId === role.id && entry.text === text,
+        );
+        if (duplicate) {
+            return replyUserError(interaction, {
+                type: ErrorTypes.VALIDATION,
+                message: 'That exact status line already exists.',
+            });
+        }
+
+        statusLines.push({ roleId: role.id, text });
+        await updateIdCardConfig(interaction.client, interaction.guildId, { statusLines });
+        await InteractionHelper.safeEditReply(interaction, {
+            embeds: [successEmbed('ID Card', `Status line added: members with <@&${role.id}> will show **${text}**.`)],
+        });
+        return;
+    }
+
+    if (sub === 'remove-status') {
+        const index = interaction.options.getInteger('index', true);
+        const config = await getIdCardConfig(interaction.client, interaction.guildId);
+        const statusLines = [...(config.statusLines || [])];
+
+        if (index < 1 || index > statusLines.length) {
+            return replyUserError(interaction, {
+                type: ErrorTypes.VALIDATION,
+                message: `Invalid index. Use \`/id setup list-status\` to see current entries (1–${statusLines.length}).`,
+            });
+        }
+
+        const removed = statusLines.splice(index - 1, 1)[0];
+        await updateIdCardConfig(interaction.client, interaction.guildId, { statusLines });
+        await InteractionHelper.safeEditReply(interaction, {
+            embeds: [successEmbed('ID Card', `Removed status line #${index}: **${removed.text}** (<@&${removed.roleId}>).`)],
+        });
+        return;
+    }
+
+    if (sub === 'list-status') {
+        const config = await getIdCardConfig(interaction.client, interaction.guildId);
+        const statusLines = config.statusLines || [];
+
+        if (statusLines.length === 0) {
+            await InteractionHelper.safeEditReply(interaction, {
+                embeds: [createEmbed({ title: 'ID Card — Status Lines', description: 'No status lines configured yet.\nUse `/id setup add-status` to add one.', color: 'info' })],
+            });
+            return;
+        }
+
+        const list = statusLines
+            .map((entry, i) => `**${i + 1}.** <@&${entry.roleId}> → ${entry.text}`)
+            .join('\n');
+
+        const embed = createEmbed({ title: 'ID Card — Status Lines', description: list, color: 'info' })
+            .setFooter({ text: `${statusLines.length}/${MAX_STATUS_LINES} slots used` });
+
+        await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
+        return;
+    }
+
     if (sub === 'view') {
         const config = await getIdCardConfig(interaction.client, interaction.guildId);
         const highlightRole = config.highlightRoleId
@@ -215,6 +309,7 @@ async function runSetup(interaction) {
         const allowedRoles = config.allowedRoleIds.length > 0
             ? config.allowedRoleIds.map((id) => `<@&${id}>`).join(', ')
             : 'None (everyone allowed)';
+        const statusCount = (config.statusLines || []).length;
 
         const embed = createEmbed({ title: 'ID Card Configuration', color: 'info' })
             .addFields(
@@ -225,6 +320,7 @@ async function runSetup(interaction) {
                 { name: 'Badge Text', value: config.badgeText || '—', inline: true },
                 { name: 'Embed Colour', value: config.embedColor || 'Default', inline: true },
                 { name: 'Allowed Roles', value: allowedRoles, inline: false },
+                { name: 'Status Lines', value: `${statusCount} configured — use \`/id setup list-status\` to view`, inline: false },
             );
 
         await InteractionHelper.safeEditReply(interaction, { embeds: [embed] });
@@ -238,7 +334,6 @@ export default {
     data: new SlashCommandBuilder()
         .setName('id')
         .setDescription('Display or configure identity cards for server members')
-        // /id card [user]
         .addSubcommandGroup((group) =>
             group
                 .setName('setup')
@@ -304,6 +399,30 @@ export default {
                 )
                 .addSubcommand((sub) =>
                     sub
+                        .setName('add-status')
+                        .setDescription('Add a role-based status line shown on ID cards')
+                        .addRoleOption((opt) =>
+                            opt.setName('role').setDescription('Role that triggers this status line').setRequired(true),
+                        )
+                        .addStringOption((opt) =>
+                            opt.setName('text').setDescription('Text to display, e.g. "Enlisted in Blackout PMC"').setRequired(true).setMaxLength(200),
+                        ),
+                )
+                .addSubcommand((sub) =>
+                    sub
+                        .setName('remove-status')
+                        .setDescription('Remove a status line by its number')
+                        .addIntegerOption((opt) =>
+                            opt.setName('index').setDescription('Line number (use /id setup list-status to see)').setRequired(true).setMinValue(1).setMaxValue(MAX_STATUS_LINES),
+                        ),
+                )
+                .addSubcommand((sub) =>
+                    sub
+                        .setName('list-status')
+                        .setDescription('List all configured status lines'),
+                )
+                .addSubcommand((sub) =>
+                    sub
                         .setName('view')
                         .setDescription('View the current ID card configuration'),
                 ),
@@ -319,8 +438,13 @@ export default {
     category: 'Community',
 
     async execute(interaction) {
+        const group = interaction.options.getSubcommandGroup(false);
+        const isSetup = group === 'setup';
+
+        // /id card → public so everyone can see it
+        // /id setup * → ephemeral (admin-only config)
         const deferSuccess = await InteractionHelper.safeDefer(interaction, {
-            flags: MessageFlags.Ephemeral,
+            flags: isSetup ? MessageFlags.Ephemeral : undefined,
         });
         if (!deferSuccess) {
             logger.warn('ID interaction defer failed', {
@@ -332,9 +456,7 @@ export default {
         }
 
         try {
-            const group = interaction.options.getSubcommandGroup(false);
-
-            if (group === 'setup') {
+            if (isSetup) {
                 return await runSetup(interaction);
             }
 

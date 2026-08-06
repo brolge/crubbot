@@ -13,6 +13,7 @@ import { logger } from '../utils/logger.js';
  * embedColor      – hex colour used for the ID-card embed (null = bot default)
  * allowedRoleIds  – if non-empty, only members with one of these roles may use /id
  * allowEveryone   – when true, any member can use /id regardless of allowedRoleIds
+ * statusLines     – array of { roleId, text } set by admins; matching role → text shown on card
  */
 const ID_CARD_DEFAULTS = {
     enabled: false,
@@ -21,6 +22,7 @@ const ID_CARD_DEFAULTS = {
     embedColor: null,
     allowedRoleIds: [],
     allowEveryone: true,
+    statusLines: [],
 };
 
 /**

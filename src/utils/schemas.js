@@ -88,6 +88,11 @@ const VerificationConfigSchema = z
   })
   .optional();
 
+const StatusLineSchema = z.object({
+  roleId: z.string().min(1),
+  text: z.string().min(1).max(200),
+});
+
 const IdCardConfigSchema = z
   .object({
     enabled: z.boolean().default(false),
@@ -96,6 +101,7 @@ const IdCardConfigSchema = z
     embedColor: z.string().nullable().optional(),
     allowedRoleIds: z.array(z.string()).max(25).default([]),
     allowEveryone: z.boolean().default(true),
+    statusLines: z.array(StatusLineSchema).max(25).default([]),
   })
   .optional();
 

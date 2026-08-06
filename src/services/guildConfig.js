@@ -23,6 +23,7 @@ const GUILD_CONFIG_DEFAULTS = {
         embedColor: null,
         allowedRoleIds: [],
         allowEveryone: true,
+        statusLines: [],
     },
     shitAnnounce: {
         channelId: null,
