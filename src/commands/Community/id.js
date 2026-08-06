@@ -116,7 +116,7 @@ async function runCard(interaction) {
 
     if (matchedLines.length > 0) {
         embed.addFields({
-            name: 'Status',
+            name: 'Information',
             value: matchedLines.map((line) => `> ${line}`).join('\n'),
             inline: false,
         });
