@@ -16,6 +16,14 @@ const GUILD_CONFIG_DEFAULTS = {
     disabledCommands: {},
     disabledCategories: {},
     permissionTemplates: [],
+    idCard: {
+        enabled: false,
+        highlightRoleId: null,
+        badgeText: 'Member',
+        embedColor: null,
+        allowedRoleIds: [],
+        allowEveryone: true,
+    },
     shitAnnounce: {
         channelId: null,
         displayName: 'Brolge',

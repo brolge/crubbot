@@ -88,6 +88,17 @@ const VerificationConfigSchema = z
   })
   .optional();
 
+const IdCardConfigSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    highlightRoleId: z.string().nullable().optional(),
+    badgeText: z.string().max(100).default('Member'),
+    embedColor: z.string().nullable().optional(),
+    allowedRoleIds: z.array(z.string()).max(25).default([]),
+    allowEveryone: z.boolean().default(true),
+  })
+  .optional();
+
 const LockdownConfigSchema = z
   .object({
     antiNukeEnabled: z.boolean().default(false),
@@ -155,6 +166,7 @@ export const GuildConfigSchema = z
     enableLogging: z.boolean().optional(),
     verification: VerificationConfigSchema,
     lockdown: LockdownConfigSchema,
+    idCard: IdCardConfigSchema,
   })
   .passthrough();
 
