@@ -32,8 +32,8 @@ export const botConfig = {
     activityRotateMs: 20_000,
     activities: [
       {
-        name: "Blackout coming out never",
-        type: 3, // Watching
+        name: "Serving servers with Papa Smurf",
+        type: 4, // Custom
       },
     ],
   },

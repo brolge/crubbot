@@ -23,7 +23,7 @@ const appConfig = {
     token: process.env.DISCORD_TOKEN || process.env.TOKEN,
     clientId: process.env.CLIENT_ID,
     guildId: process.env.GUILD_ID,
-    multiGuild: process.env.MULTI_GUILD === 'true',
+    multiGuild: true,
 
     shop: {
       ...botConfig.shop,
@@ -73,28 +73,28 @@ const appConfig = {
   shop,
 
   features: {
-    
-    economy: true,                  
-    leveling: true,                 
-    moderation: true,               
-    logging: true,                  
-    welcome: true,                  
 
-    tickets: true,                  
-    giveaways: true,                
-    birthday: true,                 
-    counter: true,                  
+    economy: true,
+    leveling: true,
+    moderation: true,
+    logging: true,
+    welcome: true,
 
-    verification: true,             
-    reactionRoles: true,            
-    joinToCreate: true,             
+    tickets: true,
+    giveaways: true,
+    birthday: true,
+    counter: true,
 
-    voice: true,                    
-    search: true,                   
-    tools: true,                    
-    utility: true,                  
-    community: true,                
-    fun: true,                      
+    verification: true,
+    reactionRoles: true,
+    joinToCreate: true,
+
+    voice: true,
+    search: true,
+    tools: true,
+    utility: true,
+    community: true,
+    fun: true,
 
     music: true,
   },

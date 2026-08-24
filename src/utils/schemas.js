@@ -102,6 +102,8 @@ const IdCardConfigSchema = z
     allowedRoleIds: z.array(z.string()).max(25).default([]),
     allowEveryone: z.boolean().default(true),
     statusLines: z.array(StatusLineSchema).max(25).default([]),
+    ignEnabled: z.boolean().default(false),
+    hiddenRoleIds: z.array(z.string()).max(50).default([]),
   })
   .optional();
 
@@ -149,6 +151,13 @@ const LockdownConfigSchema = z
   })
   .default({});
 
+const ShitAnnounceConfigSchema = z
+  .object({
+    channelId: z.string().nullable().optional(),
+    displayName: z.string().max(32).optional()
+  })
+  .optional();
+
 export const GuildConfigSchema = z
   .object({
     prefix: z.string().optional(),
@@ -173,6 +182,7 @@ export const GuildConfigSchema = z
     verification: VerificationConfigSchema,
     lockdown: LockdownConfigSchema,
     idCard: IdCardConfigSchema,
+    shitAnnounce: ShitAnnounceConfigSchema,
   })
   .passthrough();
 

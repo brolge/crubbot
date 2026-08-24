@@ -23,6 +23,8 @@ const ID_CARD_DEFAULTS = {
     allowedRoleIds: [],
     allowEveryone: true,
     statusLines: [],
+    ignEnabled: false,
+    hiddenRoleIds: [],
 };
 
 /**
@@ -82,4 +84,28 @@ export function checkIdCardAccess(config, member) {
     }
 
     return { allowed: true };
+}
+
+/**
+ * Fetch a user's In-Game Name for a specific guild
+ */
+export async function getIdCardIgn(client, guildId, userId) {
+    if (!client?.db || typeof client.db.get !== 'function') return null;
+    const key = `guild:${guildId}:idCard_ign:${userId}`;
+    const value = await client.db.get(key, null);
+    return value && value.value !== undefined ? value.value : value;
+}
+
+/**
+ * Save a user's In-Game Name for a specific guild
+ */
+export async function setIdCardIgn(client, guildId, userId, ign) {
+    if (!client?.db || typeof client.db.set !== 'function') return false;
+    const key = `guild:${guildId}:idCard_ign:${userId}`;
+    if (!ign) {
+        await client.db.delete(key);
+    } else {
+        await client.db.set(key, ign);
+    }
+    return true;
 }

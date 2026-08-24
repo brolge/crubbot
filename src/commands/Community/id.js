@@ -12,6 +12,8 @@ import {
     getIdCardConfig,
     updateIdCardConfig,
     checkIdCardAccess,
+    getIdCardIgn,
+    setIdCardIgn,
 } from '../../services/idCardService.js';
 
 const MAX_STATUS_LINES = 25;
@@ -72,19 +74,32 @@ async function runCard(interaction) {
         .addFields(
             { name: 'Display Name', value: displayName, inline: true },
             { name: 'Username', value: username, inline: true },
-            { name: '\u200b', value: '\u200b', inline: true }, // spacer
-            {
-                name: 'Account Created',
-                value: `<t:${createdTimestamp}:R>`,
-                inline: true,
-            },
-            {
-                name: 'Joined Server',
-                value: joinedTimestamp ? `<t:${joinedTimestamp}:R>` : 'N/A',
-                inline: true,
-            },
-            { name: '\u200b', value: '\u200b', inline: true }, // spacer
         );
+
+    if (config.ignEnabled) {
+        const ign = await getIdCardIgn(interaction.client, interaction.guildId, user.id);
+        if (ign) {
+            embed.addFields({ name: 'In-Game Name', value: ign, inline: true });
+        } else {
+            embed.addFields({ name: '\u200b', value: '\u200b', inline: true });
+        }
+    } else {
+        embed.addFields({ name: '\u200b', value: '\u200b', inline: true });
+    }
+
+    embed.addFields(
+        {
+            name: 'Account Created',
+            value: `<t:${createdTimestamp}:R>`,
+            inline: true,
+        },
+        {
+            name: 'Joined Server',
+            value: joinedTimestamp ? `<t:${joinedTimestamp}:R>` : 'N/A',
+            inline: true,
+        },
+        { name: '\u200b', value: '\u200b', inline: true }, // spacer
+    );
 
     // Badge field (only shown when a highlight role is configured)
     if (config.highlightRoleId) {
@@ -97,8 +112,9 @@ async function runCard(interaction) {
     }
 
     // Top roles (up to 5)
+    const hiddenRoles = new Set(config.hiddenRoleIds || []);
     const topRoles = member.roles.cache
-        .filter((r) => r.id !== interaction.guild.id) // filter @everyone
+        .filter((r) => r.id !== interaction.guild.id && !hiddenRoles.has(r.id)) // filter @everyone & hidden
         .sort((a, b) => b.position - a.position)
         .first(5)
         .map((r) => `${r}`)
@@ -225,6 +241,43 @@ async function runSetup(interaction) {
         return;
     }
 
+    if (sub === 'hide-role') {
+        const role = interaction.options.getRole('role', true);
+        const config = await getIdCardConfig(interaction.client, interaction.guildId);
+        const hiddenRoleIds = [...new Set([...(config.hiddenRoleIds || []), role.id])];
+        if (hiddenRoleIds.length > 50) {
+            return replyUserError(interaction, {
+                type: ErrorTypes.VALIDATION,
+                message: 'You can only hide up to 50 roles.',
+            });
+        }
+        await updateIdCardConfig(interaction.client, interaction.guildId, { hiddenRoleIds });
+        await InteractionHelper.safeEditReply(interaction, {
+            embeds: [successEmbed('ID Card', `<@&${role.id}> will no longer show up in the Top Roles section of ID cards.`)],
+        });
+        return;
+    }
+
+    if (sub === 'unhide-role') {
+        const role = interaction.options.getRole('role', true);
+        const config = await getIdCardConfig(interaction.client, interaction.guildId);
+        const hiddenRoleIds = (config.hiddenRoleIds || []).filter((id) => id !== role.id);
+        await updateIdCardConfig(interaction.client, interaction.guildId, { hiddenRoleIds });
+        await InteractionHelper.safeEditReply(interaction, {
+            embeds: [successEmbed('ID Card', `<@&${role.id}> can now show up in the Top Roles section again.`)],
+        });
+        return;
+    }
+
+    if (sub === 'ign-toggle') {
+        const enabled = interaction.options.getBoolean('enabled', true);
+        await updateIdCardConfig(interaction.client, interaction.guildId, { ignEnabled: enabled });
+        await InteractionHelper.safeEditReply(interaction, {
+            embeds: [successEmbed('ID Card', enabled ? 'In-Game Name feature is now **enabled**.' : 'In-Game Name feature is now **disabled**.')],
+        });
+        return;
+    }
+
     // ── Status line management ──
 
     if (sub === 'add-status') {
@@ -315,11 +368,12 @@ async function runSetup(interaction) {
             .addFields(
                 { name: 'Enabled', value: config.enabled ? 'Yes' : 'No', inline: true },
                 { name: 'Allow Everyone', value: config.allowEveryone ? 'Yes' : 'No', inline: true },
-                { name: '\u200b', value: '\u200b', inline: true },
+                { name: 'IGN Feature', value: config.ignEnabled ? 'Yes' : 'No', inline: true },
                 { name: 'Highlight Role', value: highlightRole, inline: true },
                 { name: 'Badge Text', value: config.badgeText || '—', inline: true },
                 { name: 'Embed Colour', value: config.embedColor || 'Default', inline: true },
                 { name: 'Allowed Roles', value: allowedRoles, inline: false },
+                { name: 'Hidden Roles', value: (config.hiddenRoleIds || []).length > 0 ? config.hiddenRoleIds.map((id) => `<@&${id}>`).join(', ') : 'None', inline: false },
                 { name: 'Status Lines', value: `${statusCount} configured — use \`/id setup list-status\` to view`, inline: false },
             );
 

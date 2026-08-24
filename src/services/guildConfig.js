@@ -24,6 +24,8 @@ const GUILD_CONFIG_DEFAULTS = {
         allowedRoleIds: [],
         allowEveryone: true,
         statusLines: [],
+        ignEnabled: false,
+        hiddenRoleIds: [],
     },
     shitAnnounce: {
         channelId: null,
